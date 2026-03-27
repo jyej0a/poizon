@@ -91,11 +91,11 @@ export async function getPoizonListings() {
 /**
  * Poizon API: 브랜드 명으로 SPU 여러 개(대량) 조회 로직 (2단계 연동)
  */
-export async function searchPoizonByBrand(brandName: string) {
+export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSize = 20) {
   try {
     const client = await getPoizonClient();
 
-    // 1단계: 이름으로 브랜드 ID 조회 (영문, 국문 동시 검색으로 로컬라이제이션 문제 타파)
+    // 1단계: 이름으로 브랜드 ID 조회
     const basePayload = {
       name: brandName,
       exactMatch: false,
@@ -108,20 +108,16 @@ export async function searchPoizonByBrand(brandName: string) {
       client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/brand/page/by-name", { ...basePayload, language: "en" })
     ]);
     
-    // 구조 파악 방어 코드 (포이즌 API는 data.contents 에 배열을 반환함)
     const extractList = (res: any) => Array.isArray(res?.data?.contents) ? res.data.contents : 
                                      Array.isArray(res?.contents) ? res.contents : 
                                      Array.isArray(res?.data?.list) ? res.data.list : [];
                                      
     const brandListKo = extractList(brandResKo);
     const brandListEn = extractList(brandResEn);
-    
-    // 두 결과를 합치고 (우선적으로 isShowLogo == 1 인 메인 브랜드를 선별)
     const mergedBrands = [...brandListKo, ...brandListEn];
     
     let brandId = null;
     if (mergedBrands.length > 0) {
-      // isShowLogo === 1 이거나 isShow === 1 인 브랜드를 최우선으로 선택
       const bestMatch = mergedBrands.find((b: any) => b.isShowLogo === 1) || 
                         mergedBrands.find((b: any) => b.isShow === 1) || 
                         mergedBrands[0];
@@ -132,18 +128,21 @@ export async function searchPoizonByBrand(brandName: string) {
       return { success: false, error: `'${brandName}' 브랜드의 고유 ID를 찾을 수 없습니다.` };
     }
 
-    // 2단계: 브랜드 ID로 묶음(Batch) 상품 정보 조회
+    // 2단계: 브랜드 ID로 묶음(Batch) 상품 정보 조회 (Paging 적용)
     const spuPayload = {
       brandIdList: [brandId],
       language: "ko",
-      region: "KR", // 코오롱 스포츠 등 한국 특화 브랜드/판매망 지원을 위해 KR로 롤백
-      pageNum: 1,
-      pageSize: 20, 
+      region: "KR",
+      pageNum,
+      pageSize, 
     };
 
     const spuRes = await client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-brandId", spuPayload);
 
-    return { success: true, data: spuRes };
+    // 전체 개수(total) 추출 시도
+    const total = spuRes?.data?.total || spuRes?.total || 0;
+
+    return { success: true, data: spuRes, total };
   } catch (error: any) {
     console.error("Poizon Brand Search Action Error:", error);
     return { success: false, error: error.message };

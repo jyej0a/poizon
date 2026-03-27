@@ -3,7 +3,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
 
-export async function savePoizonSettings(appKey: string, appSecret: string) {
+export async function savePoizonSettings(appKey: string, appSecret: string, accessToken?: string) {
   try {
     const { userId } = await auth();
     if (!userId) {
@@ -54,8 +54,9 @@ export async function savePoizonSettings(appKey: string, appSecret: string) {
         user_id: user.id,
         poizon_app_key: appKey,
         poizon_app_secret: appSecret,
+        ...(accessToken ? { poizon_access_token: accessToken } : {}),
         updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id" }); // Postgres ON CONFLICT
+      }, { onConflict: "user_id" });
 
     if (configError) {
       throw new Error("설정 저장에 실패했습니다. " + configError.message);
@@ -86,7 +87,7 @@ export async function getPoizonSettings() {
 
     const { data: config } = await supabase
       .from("user_configs")
-      .select("poizon_app_key, poizon_app_secret")
+      .select("poizon_app_key, poizon_app_secret, poizon_access_token")
       .eq("user_id", user.id)
       .single();
 

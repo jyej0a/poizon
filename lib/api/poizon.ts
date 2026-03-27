@@ -3,6 +3,7 @@ import crypto from "crypto";
 export interface PoizonConfig {
   appKey: string;
   appSecret: string;
+  accessToken?: string; // 셀러 OAuth 토큰: 입찰/리스팅 등 셀러 행위에 필수
   baseUrl?: string;
   version?: string;
 }
@@ -10,13 +11,15 @@ export interface PoizonConfig {
 export class PoizonClient {
   private appKey: string;
   private appSecret: string;
+  private accessToken?: string;
   private baseUrl: string;
   private version: string;
 
   constructor(config: PoizonConfig) {
     this.appKey = config.appKey;
     this.appSecret = config.appSecret;
-    this.baseUrl = config.baseUrl || "https://open.poizon.com"; // cURL 예시에 명시된 도메인
+    this.accessToken = config.accessToken;
+    this.baseUrl = config.baseUrl || "https://open.poizon.com";
   }
 
   /**
@@ -90,6 +93,8 @@ export class PoizonClient {
       timestamp: Date.now(),
       language: "en",
       timeZone: "Asia/Seoul",
+      // access_token이 있을 때만 포함 (조회 API는 불필요, 입찰/리스팅은 필수)
+      ...(this.accessToken ? { access_token: this.accessToken } : {}),
       ...businessParams,
     };
 

@@ -7,6 +7,7 @@ import { savePoizonSettings, getPoizonSettings } from "@/app/actions/settings";
 export function SettingsForm() {
   const [appKey, setAppKey] = useState("");
   const [appSecret, setAppSecret] = useState("");
+  const [accessToken, setAccessToken] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [message, setMessage] = useState<{ type: "success" | "error", text: string } | null>(null);
@@ -17,6 +18,7 @@ export function SettingsForm() {
       if (res.success && res.data) {
         setAppKey(res.data.poizon_app_key || "");
         setAppSecret(res.data.poizon_app_secret || "");
+        setAccessToken((res.data as any).poizon_access_token || "");
       }
       setIsInitializing(false);
     }
@@ -32,7 +34,7 @@ export function SettingsForm() {
     setIsLoading(true);
     setMessage(null);
     
-    const res = await savePoizonSettings(appKey, appSecret);
+    const res = await savePoizonSettings(appKey, appSecret, accessToken || undefined);
     
     if (res.success) {
       setMessage({ type: "success", text: "설정이 성공적으로 저장되었습니다." });
@@ -97,9 +99,25 @@ export function SettingsForm() {
             className="w-full px-3 py-2 bg-secondary/50 border rounded-lg outline-none focus:border-primary transition-colors" 
           />
         </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium flex items-center gap-1.5">
+            Access Token
+            <span className="text-xs text-amber-500 font-normal bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded">
+              ⚡ 입찰 필수
+            </span>
+          </label>
+          <input 
+            type="password" 
+            value={accessToken}
+            onChange={(e) => setAccessToken(e.target.value)}
+            placeholder="Enter Poizon Access Token (OAuth)" 
+            className="w-full px-3 py-2 bg-secondary/50 border rounded-lg outline-none focus:border-primary transition-colors" 
+          />
+        </div>
         <div className="pt-2">
           <p className="text-xs text-muted-foreground leading-relaxed">
-            * 안전을 위해 App Secret 필드는 입력 시 마스킹 처리됩니다. 발급받은 키 값의 공백을 제외하고 정확히 입력해 주세요. (Poizon Open Platform &gt; Console &gt; App Management 탭 참조)
+            * App Key/Secret은 API 서명용 자격증명입니다. 입찰과 같은 셀러 계정 행위(Listing)에는 추가적으로 <strong>Access Token(OAuth 셀러 토큰)</strong>이 필요합니다.
+            발급 방법: Poizon Open Platform &gt; Console &gt; 내 앱 클릭 &gt; Traffic Certificate 탭 참조
           </p>
         </div>
       </div>
