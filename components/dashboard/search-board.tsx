@@ -1,13 +1,17 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
-  Search, Loader2, Image as ImageIcon, Trash2, Calculator, Gavel, Hash, Tag as TagIcon, 
-  ChevronRight, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight 
+  Search, Loader2, Gavel, ExternalLink, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, ArrowLeftRight, X,
+  Trash2, ChevronLeft, ChevronsLeft, ChevronsRight
 } from "lucide-react";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
 import { executeBidding, type BidPayload } from "@/app/actions/bidding";
 import { getSkuRecommendations } from "@/app/actions/recommendations";
+import { getNaverShoppingResults } from "@/app/actions/naver";
+import { getSystemSettings } from "@/app/actions/settings";
+import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
+import { MarginSettingsDialog } from "./margin-settings-dialog";
 
 export function SearchBoard() {
   const [keyword, setKeyword] = useState("");
@@ -25,11 +29,84 @@ export function SearchBoard() {
   const [skuRecommendations, setSkuRecommendations] = useState<Record<string, any>>({});
   const [loadingRecommendations, setLoadingRecommendations] = useState<Record<string, boolean>>({});
 
+  const [pageSize, setPageSize] = useState(50);
+  const [lastBrandKeyword, setLastBrandKeyword] = useState("");
+
   // 페이징 관련 State
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const [pageSize, setPageSize] = useState(50);
-  const [lastBrandKeyword, setLastBrandKeyword] = useState("");
+
+  // 네이버 쇼핑 및 마진용 State
+  const [naverResults, setNaverResults] = useState<Record<string, any>>({});
+  const [loadingNaver, setLoadingNaver] = useState<Record<string, boolean>>({});
+  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+
+  // 네이버 상세 팝업용 State
+  const [selectedNaverItems, setSelectedNaverItems] = useState<any[] | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // 열 너비 조절 기능
+  const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({
+    info: 340,
+    avg: 100,
+    naver: 110,
+    exposure: 120,
+    salesChina: 90,
+    salesLocal: 90,
+    bid: 160,
+    manage: 70
+  });
+
+  const [resizing, setResizing] = useState<string | null>(null);
+
+  useEffect(() => {
+    const savedWidths = localStorage.getItem('poizon_dashboard_widths');
+    if (savedWidths) {
+      try {
+        setColumnWidths(JSON.parse(savedWidths));
+      } catch (e) {
+        console.error("Failed to parse saved widths", e);
+      }
+    }
+  }, []);
+
+  const handleResizeStart = (e: React.MouseEvent, column: string) => {
+    e.preventDefault();
+    setResizing(column);
+    
+    const startX = e.pageX;
+    const startWidth = columnWidths[column];
+    
+    const handleMouseMove = (updateEvent: MouseEvent) => {
+      const newWidth = Math.max(60, startWidth + (updateEvent.pageX - startX));
+      setColumnWidths(prev => ({ ...prev, [column]: newWidth }));
+    };
+    
+    const handleMouseUp = () => {
+      setResizing(null);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const saveWidths = () => {
+    localStorage.setItem('poizon_dashboard_widths', JSON.stringify(columnWidths));
+    alert("열 너비 설정이 저장되었사옵니다.");
+  };
+
+  React.useEffect(() => {
+    const fetchSettings = async () => {
+      const res = await getSystemSettings();
+      if (res.success && res.data) {
+        setSystemSettings(res.data as any);
+      }
+    };
+    fetchSettings();
+  }, []);
 
   const toggleRow = (id: string, skus?: any[]) => {
     const isNowExpanded = !expandedRows[id];
@@ -67,12 +144,26 @@ export function SearchBoard() {
     setBiddingPrices(prev => ({ ...prev, [skuId]: numStr }));
   };
 
-  const calculateNet = (priceStr?: string) => {
-    if (!priceStr) return null;
+  const getMargin = (priceStr?: string, cost?: number) => {
+    if (!priceStr || !systemSettings) return null;
     const price = Number(priceStr);
     if (!price || price <= 0) return null;
-    const fee = Math.max(15000, Math.min(price * 0.1, 45000));
-    return price - fee;
+    const margin = calculateMargin(price, systemSettings);
+    
+    // 네이버 가격(원가)이 제공되면 실제 정산 이익을 계산합니다.
+    const actualProfit = cost ? margin.netProfit - cost : margin.netProfit;
+    const actualRate = cost ? (actualProfit / cost) * 100 : margin.marginRate;
+
+    return {
+      ...margin,
+      actualProfit,
+      actualRate: parseFloat(actualRate.toFixed(2))
+    };
+  };
+
+  const calculateNet = (priceStr?: string, cost?: number) => {
+    const margin = getMargin(priceStr, cost);
+    return margin ? margin.actualProfit : null;
   };
 
   const [isBidding, setIsBidding] = useState(false);
@@ -220,6 +311,21 @@ export function SearchBoard() {
     }
   };
 
+  const fetchNaverPrice = async (articleNumber: string) => {
+    if (!articleNumber) return;
+    setLoadingNaver(prev => ({ ...prev, [articleNumber]: true }));
+    try {
+      const res = await getNaverShoppingResults(articleNumber);
+      if (res.success && res.data) {
+        setNaverResults(prev => ({ ...prev, [articleNumber]: res.data }));
+      }
+    } catch (e) {
+      console.error("Failed to fetch naver price", e);
+    } finally {
+      setLoadingNaver(prev => ({ ...prev, [articleNumber]: false }));
+    }
+  };
+
   const parseAndPushItem = (rawData: any, targetArray: any[], term: string) => {
     let apiData = rawData.data || rawData;
     if (Array.isArray(apiData)) apiData = apiData[0] || {};
@@ -228,23 +334,36 @@ export function SearchBoard() {
     
     if (!spuInfo.spuId && !spuInfo.goodsId && !spuInfo.title) return;
     
+    const articleNum = spuInfo.articleNumber || spuInfo.goodsNo || term || "N/A";
+    
+    // 네이버 검색 트리거 (이미 검색 중인 경우 제외)
+    if (articleNum !== "N/A" && !naverResults[articleNum] && !loadingNaver[articleNum]) {
+      fetchNaverPrice(articleNum);
+    }
+
     targetArray.push({
       id: spuInfo.spuId || spuInfo.goodsId || term,
-      articleNumber: spuInfo.articleNumber || spuInfo.goodsNo || "N/A",
+      articleNumber: articleNum,
       brand: spuInfo.brandName || spuInfo.brand || "-",
       category: spuInfo.level2CategoryName || spuInfo.categoryName || "-",
       title: spuInfo.title || spuInfo.spuTitle || spuInfo.goodsName || "Unknown Product",
       image: spuInfo.logoUrl || spuInfo.images?.[0] || spuInfo.image || spuInfo.imgUrl || skuList[0]?.image || null,
       skus: skuList,
       raw: rawData,
-      salesVolume: rawData.spuStats?.commoditySales?.globalSoldNum30 ?? rawData.spuStats?.salesAmount ?? rawData.spuStats?.transactionVolume ?? "-",
-      localSalesVolume: rawData.spuStats?.commoditySales?.localSoldNum30 ?? "-",
+      salesVolume: rawData.spuStats?.commoditySales?.totalSoldNum30 ??
+                   rawData.spuStats?.commoditySales?.soldNum30 ?? 
+                   rawData.spuStats?.commoditySales?.globalSoldNum30 ?? 
+                   rawData.spuStats?.salesAmount ?? "-",
+      localSalesVolume: rawData.spuStats?.commoditySales?.localSoldNum30 ?? 
+                        rawData.spuStats?.commoditySales?.soldNum ?? "-",
       minPrice: rawData.spuStats?.marketPrice?.globalMarketPriceVO?.amountText ?? 
                 rawData.spuStats?.minPrice?.globalMinPriceVO?.amountText ?? 
                 rawData.spuStats?.minPrice?.price ?? 
                 rawData.spuStats?.authPriceVO?.amountText ??
                 rawData.spuStats?.authPrice?.amount ?? "-",
-      avgPrice: rawData.spuStats?.averagePrice?.globalAveragePriceVO?.amountText ?? 
+      avgPrice: rawData.spuStats?.averagePrice?.averagePriceVO?.amountText ??
+                rawData.spuStats?.averagePrice?.averagePrice?.amount ??
+                rawData.spuStats?.averagePrice?.globalAveragePriceVO?.amountText ?? 
                 rawData.spuStats?.averagePrice?.globalAveragePrice?.amount ?? "-",
       skuDetails: rawData.skuStats || [],
       spuStats: rawData.spuStats || {},
@@ -280,80 +399,174 @@ export function SearchBoard() {
             <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{items.length} 건</span>
           </div>
           <div className="flex items-center gap-3">
-            <button className="text-[11px] px-3 py-1.5 border border-secondary rounded-lg hover:bg-secondary flex items-center gap-1.5 transition-colors font-medium"><Calculator size={14} /> 마진 설정</button>
+            <button 
+              onClick={saveWidths}
+              className="text-[11px] px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5 flex items-center gap-1.5 transition-colors font-bold"
+            >
+              <ArrowLeftRight size={14} /> 열 너비 유지
+            </button>
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="text-[11px] px-3 py-1.5 border border-secondary rounded-lg hover:bg-secondary flex items-center gap-1.5 transition-colors font-medium"
+            >
+              <Settings2 size={14} /> 마진 설정
+            </button>
             <button onClick={handleBatchBid} disabled={Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} className="text-[11px] px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-30"><Gavel size={14} /> 일괄 입찰</button>
           </div>
         </div>
         
-        <div className="overflow-x-auto flex-1 custom-scrollbar">
-          <table className="w-full text-[13px] text-left whitespace-nowrap table-fixed">
-            <thead className="text-[11px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-semibold tracking-wider">
-              <tr className="bg-secondary/10">
-                <th className="w-10 px-1 py-3 text-center border-r border-secondary/20"><input type="checkbox" className="w-3.5 h-3.5" /></th>
-                <th className="w-[450px] px-4 py-3 border-r border-secondary/20 min-w-[300px]">상품 및 판매 정보</th>
-                <th className="w-28 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">최저가</th>
-                <th className="w-24 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">노출가</th>
-                <th className="w-28 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">평균가</th>
-                <th className="w-24 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">판매량</th>
-                <th className="w-12 px-1 py-3 text-center border-r border-secondary/20">관심</th>
-                <th className="w-36 px-1 py-3 text-center border-r border-secondary/20">나의 제안</th>
-                <th className="w-16 px-1 py-3 text-center">관리</th>
+        <div className="overflow-x-auto flex-1 custom-scrollbar w-full">
+          <table className={`w-full text-[13px] text-left whitespace-nowrap table-fixed border-collapse ${resizing ? 'cursor-col-resize select-none' : ''}`}>
+            <thead className="text-[11px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-bold tracking-wider">
+              <tr className="bg-secondary/5 h-10">
+                <th style={{ width: '40px' }} className="px-1 text-center border-r border-secondary/10"><input type="checkbox" className="w-3.5 h-3.5" /></th>
+                
+                <th style={{ width: `${columnWidths.info}px` }} className="relative group/header px-4 border-r border-secondary/10">
+                  <span>중국 시장 정보</span>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'info')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+                
+                <th style={{ width: `${columnWidths.avg}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
+                  <div className="flex flex-col leading-tight -space-y-0.5">
+                    <span>최근 30일</span>
+                    <span>평균 거래가</span>
+                  </div>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'avg')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+                
+                <th style={{ width: `${columnWidths.exposure}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-orange-500/[0.02]">
+                  <div className="flex flex-col leading-tight -space-y-0.5">
+                    <span>중국 노출가</span>
+                    <span className="text-[8px] opacity-60">예상 수익 포함</span>
+                  </div>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'exposure')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+
+                <th style={{ width: `${columnWidths.naver}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.03]">
+                  <span>네이버 최저/원가</span>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'naver')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+                
+                <th style={{ width: `${columnWidths.salesChina}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
+                  <div className="flex flex-col leading-tight -space-y-0.5 text-[9px]">
+                    <span>중국 30일 판매량</span>
+                  </div>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'salesChina')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+
+                <th style={{ width: `${columnWidths.salesLocal}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-secondary/[0.02]">
+                  <div className="flex flex-col leading-tight -space-y-0.5 text-[9px]">
+                    <span>현지 30일 판매량</span>
+                  </div>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'salesLocal')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+
+                <th style={{ width: `${columnWidths.bid}px` }} className="relative group/header px-1 text-center border-r border-secondary/10">
+                  <span>나의 입찰 제안</span>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'bid')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+                
+                <th style={{ width: `${columnWidths.manage}px` }} className="relative group/header px-1 text-center">
+                  <span>관리</span>
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-secondary/20">
+            <tbody className="divide-y divide-secondary/10">
               {items.length === 0 ? (
-                <tr><td colSpan={9} className="py-24 text-center text-muted-foreground opacity-50 text-[13px]">검색을 시작해 주소서.</td></tr>
+                <tr><td colSpan={8} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">검색을 시작해 주소서.</td></tr>
               ) : (
                 items.map((item, idx) => {
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isExpanded = !!expandedRows[item.id];
                   return (
                     <React.Fragment key={`${item.articleNumber}-${idx}`}>
-                      <tr className="hover:bg-secondary/5 transition-colors group h-14">
-                        <td className="px-1 text-center border-r">
-                         <div className="flex flex-col items-center gap-1">
+                      <tr className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''}`}>
+                        <td className="px-1 text-center border-r border-secondary/10">
+                         <div className="flex flex-col items-center gap-1.5">
                            <input type="checkbox" className="w-3 h-3" />
                            {item.skuDetails?.length > 0 && (
-                             <button onClick={() => toggleRow(item.id, item.skuDetails)} className="text-muted-foreground/50 hover:text-primary">
-                               {isExpanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
+                             <button onClick={() => toggleRow(item.id, item.skuDetails)} className="text-muted-foreground/40 hover:text-primary transition-colors">
+                               {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
                              </button>
                            )}
                          </div>
                         </td>
-                        <td className="px-4 border-r border-secondary/20 overflow-hidden">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 shrink-0 bg-white border border-secondary/30 rounded-lg p-1 relative shadow-sm">
-                              {item.image ? <img src={item.image} className="w-full h-full object-contain" /> : <ImageIcon size={18} className="opacity-10 mx-auto mt-3" />}
-                              <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-white ${isBiddable ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-gray-400'}`} />
+                        <td className="px-4 border-r border-secondary/10 overflow-hidden">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 shrink-0 bg-white border border-secondary/20 rounded-lg p-1 relative shadow-sm">
+                              {item.image ? <img src={item.image} className="w-full h-full object-contain" /> : <ImageIcon size={16} className="opacity-10 mx-auto mt-2" />}
+                              <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${isBiddable ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-gray-400'}`} />
                             </div>
-                            <div className="flex flex-col min-w-0 flex-1 leading-tight">
-                              <div className="flex items-center gap-2 overflow-hidden mb-1">
-                                <span className="bg-primary/10 text-primary text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0">{item.brand}</span>
-                                <span className="font-semibold text-foreground text-[13px] truncate tracking-tight">{item.title}</span>
+                            <div className="flex flex-col min-w-0 flex-1 leading-tight gap-0.5">
+                              <div className="flex items-center gap-2 overflow-hidden">
+                                <span className="bg-primary/10 text-primary text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 uppercase">{item.brand}</span>
+                                <span className="font-bold text-foreground text-[12px] truncate tracking-tight">{item.title}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70 font-medium">
-                                <span className="font-mono opacity-80">#{item.articleNumber}</span>
-                                <span className="opacity-60">•</span>
+                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
+                                <span className="font-mono text-primary/70">{item.articleNumber}</span>
+                                <span className="opacity-30">|</span>
                                 <span>{item.category}</span>
+                                {isBiddable && <span className="ml-1 bg-emerald-500/10 text-emerald-600 text-[8px] px-1 py-0.5 rounded border border-emerald-500/20">입찰 가능</span>}
                               </div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-1 text-center border-r bg-primary/[0.01] font-bold">
-                          {item.minPrice !== "-" ? `₩${item.minPrice.toLocaleString()}` : "—"}
+                        <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01] font-bold text-foreground/80">
+                          {item.avgPrice !== "-" ? (typeof item.avgPrice === 'string' && item.avgPrice.includes('₩') ? item.avgPrice : `₩${Number(item.avgPrice).toLocaleString()}`) : "—"}
                         </td>
-                        <td className="px-1 text-center border-r bg-primary/[0.01] text-muted-foreground">—</td>
-                        <td className="px-1 text-center border-r bg-primary/[0.01] font-medium opacity-80">
-                          {item.avgPrice !== "-" ? `₩${item.avgPrice.toLocaleString()}` : "—"}
+                        <td className="px-1 text-center border-r border-secondary/10 bg-orange-500/[0.01] leading-none">
+                            <div className="font-bold text-[11px] text-orange-600/80 mb-0.5 italic shrink-0">
+                                {item.minPrice !== "-" ? (typeof item.minPrice === 'string' && item.minPrice.includes('₩') ? item.minPrice : `₩${Number(item.minPrice).toLocaleString()}`) : "—"}
+                            </div>
+                            {naverResults[item.articleNumber]?.length > 0 && item.minPrice !== "-" && (
+                              (() => {
+                                const naverPrice = Number(naverResults[item.articleNumber][0].lprice);
+                                if (isNaN(naverPrice)) return null;
+                                
+                                const rawPriceStr = typeof item.minPrice === 'string' ? item.minPrice.replace(/[^0-9]/g, "") : String(item.minPrice);
+                                const poizonPrice = Number(rawPriceStr);
+                                
+                                if (isNaN(poizonPrice) || poizonPrice <= 0) return null;
+                                
+                                const potentialMargin = calculateMargin(poizonPrice, systemSettings);
+                                const estimatedProfit = potentialMargin.netProfit - naverPrice;
+                                return (
+                                  <span className={`text-[9px] font-bold ${estimatedProfit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
+                                    수익: ₩{Math.round(estimatedProfit).toLocaleString()}
+                                  </span>
+                                );
+                              })()
+                            )}
                         </td>
-                        <td className="px-1 text-center border-r border-secondary/20 bg-primary/[0.01] leading-none">
-                          <div className="font-semibold text-[13px]">{item.salesVolume}+</div>
-                          <div className="text-[10px] text-muted-foreground mt-1 opacity-50 font-medium">KR: {item.localSalesVolume}</div>
+                        <td className="px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.01] font-bold text-emerald-600">
+                          <div className="flex flex-col items-center justify-center -space-y-0.5">
+                            {loadingNaver[item.articleNumber] ? (
+                              <Loader2 size={12} className="animate-spin opacity-40" />
+                            ) : naverResults[item.articleNumber] && naverResults[item.articleNumber].length > 0 ? (
+                              <>
+                                <button 
+                                  onClick={() => { setSelectedNaverItems(naverResults[item.articleNumber]); setIsModalOpen(true); }}
+                                  className="hover:underline flex items-center gap-1 group/link"
+                                >
+                                  ₩{Number(naverResults[item.articleNumber][0].lprice).toLocaleString()}
+                                  <ExternalLink size={10} className="opacity-30 group-hover/link:opacity-100" />
+                                </button>
+                                <span className="text-[9px] opacity-40 font-bold uppercase tracking-tighter">{naverResults[item.articleNumber][0].mallName}</span>
+                              </>
+                            ) : (
+                              <span className="opacity-20">—</span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-1 text-center border-r border-secondary/20 text-muted-foreground/20 italic">☆</td>
-                        <td className="px-1 text-center border-r border-secondary/20 text-[11px] text-muted-foreground opacity-40 italic font-medium">옵션 선택 필요</td>
-                        <td className="px-1 text-center">
-                          <button onClick={() => removeItem(idx)} className="text-muted-foreground/30 hover:text-destructive flex mx-auto transition-colors"><Trash2 size={16}/></button>
+                        <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01]">
+                          <div className="font-bold text-[11px] text-foreground/70">{item.salesVolume}</div>
+                        </td>
+                        <td className="px-1 text-center border-r border-secondary/10 bg-secondary/[0.01]">
+                          <div className="font-bold text-[11px] text-foreground/50">{item.localSalesVolume}</div>
+                        </td>
+                        <td className="px-1 text-center border-r border-secondary/10 text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
+                        <td className="px-1 text-center border-secondary/10">
+                          <button onClick={() => removeItem(idx)} className="p-1.5 text-muted-foreground/20 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all mx-auto"><Trash2 size={14}/></button>
                         </td>
                       </tr>
 
@@ -364,47 +577,88 @@ export function SearchBoard() {
                         const propsStr = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ");
                         const skuPrice = sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price ?? "—";
                         const exposurePrice = rec?.priceRangeItems?.find((p: any) => p.title?.includes("노출"))?.price;
-                        
-                        return (
-                          <tr key={sku.skuId} className="bg-secondary/5 text-[12px] h-12 border-b border-dashed border-secondary/30">
-                            <td className="border-r border-secondary/10 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
-                            <td className="px-4 border-r border-secondary/10 border-dashed">
-                              <div className="flex items-center gap-3 pl-8">
-                                <div className="w-8 h-8 bg-white border border-secondary/20 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
-                                  {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-10"/>}
+                         const bidPrice = biddingPrices[sku.skuId];
+                         const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                         const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
+                         
+                         return (
+                           <tr key={sku.skuId} className="bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20">
+                             <td className="border-r border-secondary/5 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
+                             <td className="px-4 border-r border-secondary/5 border-dashed">
+                               <div className="flex items-center gap-3 pl-6">
+                                 <div className="w-8 h-8 bg-white border border-secondary/10 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
+                                   {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-5"/>}
+                                 </div>
+                                 <div className="flex flex-col min-w-0 leading-tight">
+                                   <div className="flex items-center gap-2">
+                                     <span className="font-bold text-foreground/70 truncate">{propsStr}</span>
+                                     <span className="bg-emerald-500/5 text-emerald-600/60 text-[8px] px-1 py-0.5 rounded border border-emerald-500/10 font-bold shrink-0">입찰 가능</span>
+                                   </div>
+                                   <span className="text-[9px] text-muted-foreground/40 font-mono tracking-tighter">SKUID: {sku.skuId}</span>
+                                 </div>
+                               </div>
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.01] font-bold text-foreground/60 leading-tight">
+                               <div className="text-[11px]">
+                                 {(() => {
+                                   const avgObj = sku.averagePrice;
+                                   const avg = avgObj?.averagePrice?.amount || avgObj?.globalAveragePrice?.amount || 0;
+                                   return avg > 0 ? `₩${Number(avg).toLocaleString()}` : "—";
+                                 })()}
+                               </div>
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-orange-500/[0.01] leading-none">
+                               <div className="cursor-pointer hover:underline font-bold text-orange-600/70 block mb-0.5 text-[11px]" onClick={() => (rec?.globalMinPrice || skuPrice) && handleBiddingPriceChange(sku.skuId, String(rec?.globalMinPrice || skuPrice))}>
+                                 {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto opacity-20"/> : (typeof (rec?.globalMinPrice || skuPrice) === 'number' ? `₩${(rec?.globalMinPrice || skuPrice).toLocaleString()}` : (rec?.globalMinPrice || skuPrice))}
+                               </div>
+                               {margin && (
+                                 <span className={`text-[8px] font-bold ${margin.actualProfit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
+                                   수익: ₩{Math.round(margin.actualProfit).toLocaleString()}
+                                 </span>
+                               )}
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-emerald-500/[0.01] font-bold text-emerald-600/70">
+                                <div className="flex flex-col items-center justify-center">
+                                  {naverPrice ? (
+                                    <span className="hover:underline cursor-pointer">₩{Number(naverPrice).toLocaleString()}</span>
+                                  ) : <span className="opacity-10">—</span>}
                                 </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="font-medium text-foreground/80 truncate">{propsStr}</span>
-                                  <span className="text-[10px] text-muted-foreground/50 font-mono leading-none mt-0.5">ID: {sku.skuId}</span>
-                                </div>
-                              </div>
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.01]">
+                               <div className="font-bold text-[11px] text-foreground/40">{sku.commoditySales?.totalSoldNum30 ?? sku.commoditySales?.soldNum30 ?? sku.commoditySales?.globalSoldNum30 ?? "—"}</div>
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-secondary/[0.01]">
+                               <div className="font-bold text-[11px] text-foreground/40">{sku.commoditySales?.localSoldNum30 ?? sku.commoditySales?.soldNum ?? "—"}</div>
+                             </td>
+                             <td className="px-1 text-center border-r border-dashed bg-blue-500/[0.01]">
+                               <div className="flex items-center justify-between px-2 gap-2">
+                                 {margin ? (
+                                   <div className="flex flex-col items-center leading-none gap-0.5 min-w-[50px]">
+                                     <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
+                                       {margin.actualProfit > 0 ? "▲" : "▼"} ₩{Math.round(margin.actualProfit).toLocaleString()}
+                                     </span>
+                                     <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
+                                   </div>
+                                 ) : <div className="min-w-[50px] opacity-10 text-[9px] font-bold">READY</div>}
+                                 
+                                 <div className="flex flex-col items-center justify-center flex-1">
+                                   <div className="relative group/input w-full max-w-[100px] mx-auto">
+                                     <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
+                                     <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">₩</span>
+                                   </div>
+                                   {bidPrice && <span className="text-[8px] text-muted-foreground/40 mt-0.5 font-bold uppercase tracking-tighter">NET: ₩{calculateNet(bidPrice, naverPrice ? Number(naverPrice) : undefined)?.toLocaleString()}</span>}
+                                 </div>
+                               </div>
+                             </td>
+                            <td className="px-2 text-center">
+                              <button 
+                                onClick={() => handleSingleBid(sku.skuId, item.id)} 
+                                disabled={!bidPrice || isBidding} 
+                                className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic mx-auto block"
+                              >
+                                BID
+                              </button>
                             </td>
-                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] font-bold">
-                              <div className="cursor-pointer hover:text-primary transition-colors" onClick={() => handleBiddingPriceChange(sku.skuId, String(rec?.globalMinPrice || skuPrice))}>
-                                {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto"/> : `₩${(rec?.globalMinPrice || skuPrice).toLocaleString()}`}
-                              </div>
-                            </td>
-                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] font-bold text-emerald-600">
-                              <div className="cursor-pointer hover:underline" onClick={() => exposurePrice && handleBiddingPriceChange(sku.skuId, String(exposurePrice))}>
-                                {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto"/> : (exposurePrice ? `₩${exposurePrice.toLocaleString()}` : "—")}
-                              </div>
-                            </td>
-                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] opacity-50">₩{sku.averagePrice?.price?.toLocaleString() || "—"}</td>
-                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] leading-none">
-                              <div className="font-bold text-xs">{sku.commoditySales?.globalSoldNum30}+</div>
-                              <div className="text-[10px] opacity-40">KR:{sku.commoditySales?.localSoldNum30}</div>
-                            </td>
-                            <td className="border-r border-dashed"></td>
-                            <td className="px-2 border-r border-dashed">
-                              <div className="flex flex-col items-center">
-                                <div className="relative">
-                                  <input type="text" value={biddingPrices[sku.skuId] ? Number(biddingPrices[sku.skuId]).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-24 text-sm px-2 py-0.5 border rounded text-right font-mono" />
-                                  <span className="absolute left-1.5 top-1 text-[10px] opacity-30">₩</span>
-                                </div>
-                                <span className="text-[10px] text-muted-foreground opacity-50 mt-0.5">{calculateNet(biddingPrices[sku.skuId])?.toLocaleString()}</span>
-                              </div>
-                            </td>
-                            <td className="px-2 text-center"><button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!biddingPrices[sku.skuId] || isBidding} className="w-full py-1 bg-primary text-primary-foreground rounded text-xs font-bold">입찰</button></td>
                           </tr>
                         );
                       })}
@@ -430,6 +684,84 @@ export function SearchBoard() {
           </div>
         )}
       </div>
+
+      {/* Naver Search Results Modal */}
+      {isModalOpen && selectedNaverItems && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-background border border-secondary shadow-2xl rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 text-[13px]">
+            <div className="flex items-center justify-between p-4 border-b bg-secondary/10">
+              <div className="flex flex-col">
+                <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                  <div className="w-5 h-5 bg-emerald-500 rounded flex items-center justify-center text-white text-[10px] font-bold">N</div>
+                  네이버 쇼핑 검색 결과
+                </h3>
+                <p className="text-xs text-muted-foreground font-medium mt-0.5">메이저 종합몰 • 낮은 가격순 정렬</p>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-secondary/20 rounded-full transition-colors">
+                <X size={20} className="text-muted-foreground" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-secondary/5">
+              <div className="grid gap-3">
+                {selectedNaverItems.length > 0 ? (
+                  selectedNaverItems.map((item, i) => (
+                    <a 
+                      key={i} 
+                      href={item.link} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-4 p-3 bg-card hover:bg-white border border-secondary/30 rounded-xl transition-all group shadow-sm hover:shadow-md"
+                    >
+                      <div className="w-16 h-16 bg-white border border-secondary/10 rounded-lg overflow-hidden shrink-0 shadow-xs p-1">
+                        <img src={item.image} className="w-full h-full object-contain" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="bg-emerald-500/10 text-emerald-600 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-tight">{item.mallName}</span>
+                          <span className="text-[10px] text-muted-foreground/50 font-medium">{item.category3}</span>
+                        </div>
+                        <h4 className="text-[13px] font-bold text-foreground/80 truncate group-hover:text-primary transition-colors" dangerouslySetInnerHTML={{ __html: item.title }} />
+                        <div className="mt-2 text-lg font-black text-foreground/90 tracking-tight">
+                          ₩{Number(item.lprice).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="px-2">
+                        <div className="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-all">
+                          <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+                        </div>
+                      </div>
+                    </a>
+                  ))
+                ) : (
+                  <div className="py-24 flex flex-col items-center justify-center text-muted-foreground bg-card rounded-2xl border border-dashed border-secondary/50">
+                    <Search className="w-8 h-8 opacity-10 mb-2" />
+                    <p className="text-[13px] font-medium opacity-40">화이트리스트에 등록된 종합몰 결과가 없습니다.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="p-4 border-t bg-background flex justify-between items-center">
+              <p className="text-[11px] text-muted-foreground font-medium italic">* 최저가는 배송비가 제외된 금액일 수 있사옵니다.</p>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="px-6 py-2 bg-secondary text-secondary-foreground rounded-lg text-xs font-bold hover:bg-secondary/80 transition-colors uppercase"
+                >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Margin Settings Dialog */}
+      <MarginSettingsDialog
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialData={systemSettings}
+        onSuccess={(newData) => setSystemSettings(newData as SystemSettings)}
+      />
     </div>
   );
 }

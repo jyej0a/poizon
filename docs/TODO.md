@@ -46,7 +46,15 @@
 - [ ] 수수료 정산 후 실수령액(net) 실시간 가계산 고도화 (환율 및 단계적 수수료 반영)
 
 ## 5. 네이버 쇼핑 및 마진 분석 연동 (Phase 2)
-- [ ] `lib/api/naver-shopping.ts` (네이버 API 연동 및 DB 기반 화이트리스트 필터 구축)
-- [ ] `lib/utils/calculate-margin.ts` (수수료/수익 산출 비즈니스 로직 작성)
-- [ ] Poizon 상품 데이터와 네이버 최저가의 비교표 및 결과 상태 UI 시각화
-- [ ] 수수료 계산 등 모듈별 단위-통합 테스트
+- [x] `lib/api/naver-shopping.ts` (네이버 API 연동 및 DB 기반 화이트리스트 필터 구축)
+- [x] `lib/utils/calculate-margin.ts` (수수료/수익 산출 비즈니스 로직 작성)
+- [x] Poizon 상품 데이터와 네이버 최저가의 비교표 및 결과 상태 UI 시각화
+- [x] 수수료 계산 등 모듈별 단위-통합 테스트
+
+## 6. 레이아웃 및 UX 고도화 (Layout & UX Refinement)
+- [ ] 전반적인 레이아웃 균형 및 여백(Spacing) 재조정
+- [ ] 색상 체계 및 타이포그래피(Inter 13px 등) 재검토 및 세련미 강화
+- [ ] 고밀도 대시보드의 가독성 개선을 위한 시각적 구분자(Divider) 및 배경색 최적화
+- [ ] 사용자 인터랙션 강화를 위한 미세 애니메이션(Micro-animations) 추가
+- [ ] 프리미엄 SaaS 느낌의 컴포넌트 스타일링 (Glassmorphism, 고품질 그림자 등)
+- [ ] 상단 Navbar 및 사이드바 컴포넌트의 시각적 완성도 보완

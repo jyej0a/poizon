@@ -8,7 +8,7 @@ import { PoizonClient } from "@/lib/api/poizon";
  * DB에 저장된 사용자의 Poizon API Key/Secret을 가져와 
  * PoizonClient 인스턴스를 반환하는 공통 유틸리티
  */
-async function getPoizonClient() {
+export async function getPoizonClient() {
   const { userId } = await auth();
   if (!userId) {
     throw new Error("Unauthorized: Please log in first.");
@@ -153,7 +153,7 @@ export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSi
  * Poizon API: SPU별 통계 데이터(최근 30일 판매량, 최소 가격 등) 및 하위 SKU 목록 조회
  * (API 제한: 한 번에 최대 5개의 spuId만 요청 가능)
  */
-export async function getSpuStatistics(spuIds: (number | string)[]) {
+export async function getSpuStatistics(spuIds: (number | string)[], region: string = "KR", language: string = "ko") {
   try {
     const client = await getPoizonClient();
     
@@ -168,9 +168,9 @@ export async function getSpuStatistics(spuIds: (number | string)[]) {
     const basePayload = {
       sellerStatusEnable: true,
       buyStatusEnable: true,
-      region: "KR",
-      language: "ko",
-      timeZone: "Asia/Seoul",
+      region: region,
+      language: language,
+      timeZone: region === "CN" ? "Asia/Shanghai" : "Asia/Seoul",
       statisticsDataQry: {
         salesEnable: true,
         minPriceEnable: true,
@@ -200,6 +200,13 @@ export async function getSpuStatistics(spuIds: (number | string)[]) {
       });
 
       const [skuRes, spuRes] = await Promise.all([skuPromise, spuPromise]);
+      
+      if (chunk.includes(19498274)) {
+        console.log("--- DEBUG SPU 19498274 START ---");
+        console.log("SKU Response:", JSON.stringify(skuRes, null, 2));
+        console.log("SPU Response:", JSON.stringify(spuRes, null, 2));
+        console.log("--- DEBUG SPU 19498274 END ---");
+      }
 
       const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
       const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];

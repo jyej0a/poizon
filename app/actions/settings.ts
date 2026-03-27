@@ -96,3 +96,60 @@ export async function getPoizonSettings() {
     return { success: false, data: null };
   }
 }
+
+export async function getSystemSettings() {
+  try {
+    const supabase = getServiceRoleClient();
+    const { data, error } = await supabase
+      .from("system_settings")
+      .select("fee_percentage, min_fee, max_fee")
+      .single();
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error) {
+    console.error("[getSystemSettings] Error:", error);
+    return { success: true, data: { fee_percentage: 10, min_fee: 15000, max_fee: 45000 } };
+  }
+}
+
+export async function updateSystemSettings(settings: { fee_percentage: number; min_fee: number; max_fee: number }) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      throw new Error("로그인이 필요합니다.");
+    }
+
+    const supabase = getServiceRoleClient();
+    
+    // system_settings는 단일 레코드만 존재하므로 첫 번째 레코드를 업데이트하거나 없으면 삽입합니다.
+    const { data: existing } = await supabase.from("system_settings").select("id").limit(1).single();
+    
+    let result;
+    if (existing) {
+      result = await supabase
+        .from("system_settings")
+        .update({
+          fee_percentage: settings.fee_percentage,
+          min_fee: settings.min_fee,
+          max_fee: settings.max_fee,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", existing.id);
+    } else {
+      result = await supabase
+        .from("system_settings")
+        .insert({
+          fee_percentage: settings.fee_percentage,
+          min_fee: settings.min_fee,
+          max_fee: settings.max_fee
+        });
+    }
+
+    if (result.error) throw result.error;
+    return { success: true };
+  } catch (error: any) {
+    console.error("[updateSystemSettings] Error:", error);
+    return { success: false, error: error.message };
+  }
+}
