@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 
 const Navbar = () => {
   return (
-    <header className="flex justify-between items-center p-4 gap-4 h-16 max-w-7xl mx-auto">
+    <header className="flex justify-between items-center p-4 gap-4 h-16 w-full border-b bg-card">
       <Link href="/" className="text-2xl font-bold">
         SaaS Template
       </Link>

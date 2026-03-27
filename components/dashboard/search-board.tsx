@@ -258,51 +258,51 @@ export function SearchBoard() {
   return (
     <div className="h-full flex flex-col gap-2 w-full">
       {/* Search Header - Compact */}
-      <div className="bg-card border rounded-xl p-3 shadow-sm">
-        <div className="flex flex-col md:flex-row gap-2">
-          <div className="flex bg-secondary/30 p-0.5 rounded-lg shrink-0">
-            <button onClick={() => setSearchType("article")} className={`px-2 py-1 text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
-            <button onClick={() => setSearchType("brand")} className={`px-2 py-1 text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
+      <div className="bg-card border border-secondary/40 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0">
+            <button onClick={() => setSearchType("article")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
+            <button onClick={() => setSearchType("brand")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
           </div>
           <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground h-3.5 w-3.5" />
-            <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearch()} placeholder={searchType === "article" ? "품번 (콤마 구분)" : "브랜드명"} className="w-full pl-7 pr-3 py-1.5 bg-secondary/30 border-none rounded-lg outline-none text-xs" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearch()} placeholder={searchType === "article" ? "품번 (콤마 구분)" : "브랜드명"} className="w-full pl-9 pr-4 py-2 bg-secondary/30 border-none rounded-lg outline-none text-[13px]" />
           </div>
-          <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-bold disabled:opacity-50">조회</button>
+          <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold disabled:opacity-50">조회</button>
         </div>
       </div>
 
       {/* Workspace Area - Full Width */}
-      <div className="flex-1 bg-card border rounded-xl shadow-sm flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b bg-secondary/5">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold">비딩 워크스페이스</h2>
-            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-bold">{items.length} 건</span>
+      <div className="flex-1 bg-card border border-secondary/40 rounded-xl shadow-sm flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b bg-secondary/5">
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-semibold tracking-tight">비딩 워크스페이스</h2>
+            <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{items.length} 건</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="text-[10px] px-2 py-1 border rounded hover:bg-secondary flex items-center gap-1 transition-colors"><Calculator size={12} /> 마진 설정</button>
-            <button onClick={handleBatchBid} disabled={Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} className="text-[10px] px-2 py-1 bg-primary text-primary-foreground rounded font-bold hover:bg-primary/90 flex items-center gap-1 disabled:opacity-30"><Gavel size={12} /> 일괄 입찰</button>
+          <div className="flex items-center gap-3">
+            <button className="text-[11px] px-3 py-1.5 border border-secondary rounded-lg hover:bg-secondary flex items-center gap-1.5 transition-colors font-medium"><Calculator size={14} /> 마진 설정</button>
+            <button onClick={handleBatchBid} disabled={Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} className="text-[11px] px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-30"><Gavel size={14} /> 일괄 입찰</button>
           </div>
         </div>
         
         <div className="overflow-x-auto flex-1 custom-scrollbar">
-          <table className="w-full text-xs text-left whitespace-nowrap table-fixed">
-            <thead className="text-[10px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-bold">
+          <table className="w-full text-[13px] text-left whitespace-nowrap table-fixed">
+            <thead className="text-[11px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-semibold tracking-wider">
               <tr className="bg-secondary/10">
-                <th className="w-8 px-1 py-1.5 text-center border-r"><input type="checkbox" className="w-3 h-3" /></th>
-                <th className="w-auto px-2 py-1.5 border-r">상품 및 판매 정보</th>
-                <th className="w-16 px-1 py-1.5 text-center border-r bg-primary/5">최저가</th>
-                <th className="w-16 px-1 py-1.5 text-center border-r bg-primary/5">노출가</th>
-                <th className="w-16 px-1 py-1.5 text-center border-r bg-primary/5">평균가</th>
-                <th className="w-16 px-1 py-1.5 text-center border-r bg-primary/5">판매량</th>
-                <th className="w-8 px-1 py-1.5 text-center border-r">관심</th>
-                <th className="w-24 px-1 py-1.5 text-center border-r">나의 제안</th>
-                <th className="w-12 px-1 py-1.5 text-center">관리</th>
+                <th className="w-10 px-1 py-3 text-center border-r border-secondary/20"><input type="checkbox" className="w-3.5 h-3.5" /></th>
+                <th className="w-[450px] px-4 py-3 border-r border-secondary/20 min-w-[300px]">상품 및 판매 정보</th>
+                <th className="w-28 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">최저가</th>
+                <th className="w-24 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">노출가</th>
+                <th className="w-28 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">평균가</th>
+                <th className="w-24 px-1 py-3 text-center border-r border-secondary/20 bg-primary/[0.03]">판매량</th>
+                <th className="w-12 px-1 py-3 text-center border-r border-secondary/20">관심</th>
+                <th className="w-36 px-1 py-3 text-center border-r border-secondary/20">나의 제안</th>
+                <th className="w-16 px-1 py-3 text-center">관리</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary/20">
               {items.length === 0 ? (
-                <tr><td colSpan={9} className="py-20 text-center text-muted-foreground opacity-50 text-[11px]">검색을 시작해 주소서.</td></tr>
+                <tr><td colSpan={9} className="py-24 text-center text-muted-foreground opacity-50 text-[13px]">검색을 시작해 주소서.</td></tr>
               ) : (
                 items.map((item, idx) => {
                   const isBiddable = item.raw?.userCanBidding !== false;
@@ -320,21 +320,21 @@ export function SearchBoard() {
                            )}
                          </div>
                         </td>
-                        <td className="px-2 border-r overflow-hidden">
-                          <div className="flex items-center gap-2">
-                            <div className="w-10 h-10 shrink-0 bg-white border rounded p-0.5 relative">
-                              {item.image ? <img src={item.image} className="w-full h-full object-contain" /> : <ImageIcon size={14} className="opacity-20 mx-auto mt-2.5" />}
-                              <div className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-white ${isBiddable ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                        <td className="px-4 border-r border-secondary/20 overflow-hidden">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 shrink-0 bg-white border border-secondary/30 rounded-lg p-1 relative shadow-sm">
+                              {item.image ? <img src={item.image} className="w-full h-full object-contain" /> : <ImageIcon size={18} className="opacity-10 mx-auto mt-3" />}
+                              <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-white ${isBiddable ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-gray-400'}`} />
                             </div>
                             <div className="flex flex-col min-w-0 flex-1 leading-tight">
-                              <div className="flex items-center gap-1.5 overflow-hidden">
-                                <span className="bg-primary/10 text-primary text-[9px] px-1 rounded font-bold shrink-0">{item.brand}</span>
-                                <span className="font-bold text-foreground text-[11px] truncate">{item.title}</span>
+                              <div className="flex items-center gap-2 overflow-hidden mb-1">
+                                <span className="bg-primary/10 text-primary text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0">{item.brand}</span>
+                                <span className="font-semibold text-foreground text-[13px] truncate tracking-tight">{item.title}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-[9px] text-muted-foreground mt-0.5">
+                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70 font-medium">
                                 <span className="font-mono opacity-80">#{item.articleNumber}</span>
+                                <span className="opacity-60">•</span>
                                 <span>{item.category}</span>
-                                <span className="opacity-40">| ID:{item.id}</span>
                               </div>
                             </div>
                           </div>
@@ -346,14 +346,14 @@ export function SearchBoard() {
                         <td className="px-1 text-center border-r bg-primary/[0.01] font-medium opacity-80">
                           {item.avgPrice !== "-" ? `₩${item.avgPrice.toLocaleString()}` : "—"}
                         </td>
-                        <td className="px-1 text-center border-r bg-primary/[0.01] leading-none">
-                          <div className="font-bold text-[10px]">{item.salesVolume}+</div>
-                          <div className="text-[8px] text-muted-foreground mt-0.5 opacity-60">KR:{item.localSalesVolume}</div>
+                        <td className="px-1 text-center border-r border-secondary/20 bg-primary/[0.01] leading-none">
+                          <div className="font-semibold text-[13px]">{item.salesVolume}+</div>
+                          <div className="text-[10px] text-muted-foreground mt-1 opacity-50 font-medium">KR: {item.localSalesVolume}</div>
                         </td>
-                        <td className="px-1 text-center border-r text-muted-foreground/20">☆</td>
-                        <td className="px-1 text-center border-r text-[9px] text-muted-foreground opacity-30 italic">옵션 선택 필요</td>
+                        <td className="px-1 text-center border-r border-secondary/20 text-muted-foreground/20 italic">☆</td>
+                        <td className="px-1 text-center border-r border-secondary/20 text-[11px] text-muted-foreground opacity-40 italic font-medium">옵션 선택 필요</td>
                         <td className="px-1 text-center">
-                          <button onClick={() => removeItem(idx)} className="text-muted-foreground/20 hover:text-destructive"><Trash2 size={12}/></button>
+                          <button onClick={() => removeItem(idx)} className="text-muted-foreground/30 hover:text-destructive flex mx-auto transition-colors"><Trash2 size={16}/></button>
                         </td>
                       </tr>
 
@@ -366,16 +366,16 @@ export function SearchBoard() {
                         const exposurePrice = rec?.priceRangeItems?.find((p: any) => p.title?.includes("노출"))?.price;
                         
                         return (
-                          <tr key={sku.skuId} className="bg-secondary/5 text-[10px] h-10 border-b border-dashed border-secondary/30">
-                            <td className="border-r border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-2.5 h-2.5 mx-auto block" /></td>
-                            <td className="px-2 border-r border-dashed">
-                              <div className="flex items-center gap-2 pl-4">
-                                <div className="w-7 h-7 bg-white border border-gray-100 rounded p-0.5 shrink-0 flex items-center justify-center">
-                                  {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={10} className="opacity-10"/>}
+                          <tr key={sku.skuId} className="bg-secondary/5 text-[12px] h-12 border-b border-dashed border-secondary/30">
+                            <td className="border-r border-secondary/10 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
+                            <td className="px-4 border-r border-secondary/10 border-dashed">
+                              <div className="flex items-center gap-3 pl-8">
+                                <div className="w-8 h-8 bg-white border border-secondary/20 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
+                                  {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-10"/>}
                                 </div>
                                 <div className="flex flex-col min-w-0">
-                                  <span className="font-bold text-foreground/80 truncate">{propsStr}</span>
-                                  <span className="text-[8px] text-muted-foreground font-mono opacity-50 leading-none">ID:{sku.skuId}</span>
+                                  <span className="font-medium text-foreground/80 truncate">{propsStr}</span>
+                                  <span className="text-[10px] text-muted-foreground/50 font-mono leading-none mt-0.5">ID: {sku.skuId}</span>
                                 </div>
                               </div>
                             </td>
@@ -391,20 +391,20 @@ export function SearchBoard() {
                             </td>
                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] opacity-50">₩{sku.averagePrice?.price?.toLocaleString() || "—"}</td>
                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.02] leading-none">
-                              <div className="font-bold">{sku.commoditySales?.globalSoldNum30}+</div>
-                              <div className="text-[8px] opacity-40">KR:{sku.commoditySales?.localSoldNum30}</div>
+                              <div className="font-bold text-xs">{sku.commoditySales?.globalSoldNum30}+</div>
+                              <div className="text-[10px] opacity-40">KR:{sku.commoditySales?.localSoldNum30}</div>
                             </td>
                             <td className="border-r border-dashed"></td>
                             <td className="px-2 border-r border-dashed">
                               <div className="flex flex-col items-center">
                                 <div className="relative">
-                                  <input type="text" value={biddingPrices[sku.skuId] ? Number(biddingPrices[sku.skuId]).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-20 text-[10px] px-1 py-0.5 border rounded text-right font-mono" />
-                                  <span className="absolute left-1 top-0.5 text-[8px] opacity-30">₩</span>
+                                  <input type="text" value={biddingPrices[sku.skuId] ? Number(biddingPrices[sku.skuId]).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-24 text-sm px-2 py-0.5 border rounded text-right font-mono" />
+                                  <span className="absolute left-1.5 top-1 text-[10px] opacity-30">₩</span>
                                 </div>
-                                <span className="text-[7px] text-muted-foreground opacity-50 -mt-0.5">{calculateNet(biddingPrices[sku.skuId])?.toLocaleString()}</span>
+                                <span className="text-[10px] text-muted-foreground opacity-50 mt-0.5">{calculateNet(biddingPrices[sku.skuId])?.toLocaleString()}</span>
                               </div>
                             </td>
-                            <td className="px-1 text-center"><button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!biddingPrices[sku.skuId] || isBidding} className="w-full py-0.5 bg-primary text-primary-foreground rounded text-[9px] font-bold">입찰</button></td>
+                            <td className="px-2 text-center"><button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!biddingPrices[sku.skuId] || isBidding} className="w-full py-1 bg-primary text-primary-foreground rounded text-xs font-bold">입찰</button></td>
                           </tr>
                         );
                       })}
@@ -418,14 +418,14 @@ export function SearchBoard() {
 
         {/* Pagination - Mini */}
         {searchType === "brand" && totalCount > pageSize && (
-          <div className="px-3 py-1.5 border-t bg-secondary/10 flex items-center justify-between text-[10px]">
+          <div className="px-4 py-2 border-t bg-secondary/10 flex items-center justify-between text-xs">
             <div className="text-muted-foreground">총 {totalCount.toLocaleString()}개</div>
-            <div className="flex items-center gap-0.5">
-              <button onClick={() => handleSearch(1)} disabled={currentPage === 1 || isLoading} className="p-1 rounded hover:bg-secondary disabled:opacity-20"><ChevronsLeft size={12} /></button>
-              <button onClick={() => handleSearch(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="p-1 rounded hover:bg-secondary disabled:opacity-20"><ChevronLeft size={12} /></button>
-              <span className="px-2 font-bold text-primary">{currentPage} / {Math.ceil(totalCount / pageSize)}</span>
-              <button onClick={() => handleSearch(currentPage + 1)} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1 rounded hover:bg-secondary disabled:opacity-20"><ChevronRight size={12} /></button>
-              <button onClick={() => handleSearch(Math.ceil(totalCount / pageSize))} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1 rounded hover:bg-secondary disabled:opacity-20"><ChevronsRight size={12} /></button>
+            <div className="flex items-center gap-1">
+              <button onClick={() => handleSearch(1)} disabled={currentPage === 1 || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronsLeft size={14} /></button>
+              <button onClick={() => handleSearch(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronLeft size={14} /></button>
+              <span className="px-3 font-bold text-primary">{currentPage} / {Math.ceil(totalCount / pageSize)}</span>
+              <button onClick={() => handleSearch(currentPage + 1)} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronRight size={14} /></button>
+              <button onClick={() => handleSearch(Math.ceil(totalCount / pageSize))} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronsRight size={14} /></button>
             </div>
           </div>
         )}
