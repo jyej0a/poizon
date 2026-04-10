@@ -201,13 +201,6 @@ export async function getSpuStatistics(spuIds: (number | string)[], region: stri
 
       const [skuRes, spuRes] = await Promise.all([skuPromise, spuPromise]);
       
-      if (chunk.includes(19498274)) {
-        console.log("--- DEBUG SPU 19498274 START ---");
-        console.log("SKU Response:", JSON.stringify(skuRes, null, 2));
-        console.log("SPU Response:", JSON.stringify(spuRes, null, 2));
-        console.log("--- DEBUG SPU 19498274 END ---");
-      }
-
       const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
       const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];
 

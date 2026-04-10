@@ -4,7 +4,7 @@ import {
   BarChart3, 
   Settings, 
   Search, 
-  Package, 
+  Gavel, 
   ListOrdered
 } from "lucide-react";
 
@@ -27,7 +27,7 @@ export function Sidebar() {
           </p>
           <NavItem href="/dashboard" icon={<BarChart3 size={18} />} label="Dashboard" />
           <NavItem href="/dashboard/items" icon={<Search size={18} />} label="Item Search" />
-          <NavItem href="/dashboard/listings" icon={<Package size={18} />} label="My Listings" />
+          <NavItem href="/dashboard/listings" icon={<Gavel size={18} />} label="입찰 관리" />
           <NavItem href="/dashboard/orders" icon={<ListOrdered size={18} />} label="Orders" />
         </div>
 

@@ -59,6 +59,23 @@ export async function executeBidding(bids: BidPayload[]) {
         // 포이즌 API는 내부적으로 code: 200이 성공을 의미함. (클라이언트에서 예외를 던지지 않을 경우 대비)
         if (response && response.code === 200) {
           console.log(`[Bidding Success / Real] SKU: ${bid.skuId}, Price: ${bid.price}`);
+          
+          // 로컬 DB에 입찰 이력 저장
+          const sellerBiddingNo = response.data?.sellerBiddingNo || response.data?.biddingNo || "";
+          try {
+            await supabase.from("bid_history").insert({
+              user_id: user.id,
+              sku_id: Number(bid.skuId),
+              spu_id: bid.spuId ? Number(bid.spuId) : null,
+              bid_price: Number(bid.price),
+              seller_bidding_no: sellerBiddingNo,
+              status: "active",
+              bid_type: "manual",
+            });
+          } catch (dbErr) {
+            console.warn("[Bidding] bid_history 저장 실패 (입찰은 성공):", dbErr);
+          }
+          
           results.push({
             skuId: bid.skuId,
             success: true,

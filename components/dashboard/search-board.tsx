@@ -428,8 +428,8 @@ export function SearchBoard() {
                 
                 <th style={{ width: `${columnWidths.avg}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
                   <div className="flex flex-col leading-tight -space-y-0.5">
-                    <span>최근 30일</span>
-                    <span>평균 거래가</span>
+                    <span>30일 거래가</span>
+                    <span className="text-[9px] opacity-60">(전 세계 평균)</span>
                   </div>
                   <div onMouseDown={(e) => handleResizeStart(e, 'avg')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
@@ -437,7 +437,7 @@ export function SearchBoard() {
                 <th style={{ width: `${columnWidths.exposure}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-orange-500/[0.02]">
                   <div className="flex flex-col leading-tight -space-y-0.5">
                     <span>중국 노출가</span>
-                    <span className="text-[8px] opacity-60">예상 수익 포함</span>
+                    <span className="text-[8px] opacity-60 hover:opacity-100 transition-opacity">판매자 센터 노출가 기준</span>
                   </div>
                   <div onMouseDown={(e) => handleResizeStart(e, 'exposure')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
@@ -448,15 +448,17 @@ export function SearchBoard() {
                 </th>
                 
                 <th style={{ width: `${columnWidths.salesChina}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
-                  <div className="flex flex-col leading-tight -space-y-0.5 text-[9px]">
-                    <span>중국 30일 판매량</span>
+                  <div className="flex flex-col leading-tight -space-y-1">
+                    <span>30일 판매량</span>
+                    <span className="text-[9px] opacity-60">(중국)</span>
                   </div>
                   <div onMouseDown={(e) => handleResizeStart(e, 'salesChina')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
 
-                <th style={{ width: `${columnWidths.salesLocal}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-secondary/[0.02]">
-                  <div className="flex flex-col leading-tight -space-y-0.5 text-[9px]">
-                    <span>현지 30일 판매량</span>
+                <th style={{ width: `${columnWidths.salesLocal}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.04]">
+                  <div className="flex flex-col leading-tight -space-y-1">
+                    <span>30일 판매량</span>
+                    <span className="text-[9px] opacity-60">(현지 판매자)</span>
                   </div>
                   <div onMouseDown={(e) => handleResizeStart(e, 'salesLocal')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>

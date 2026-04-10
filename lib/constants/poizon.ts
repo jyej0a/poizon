@@ -31,5 +31,10 @@ export const POIZON_CONSTANTS = {
     
     // 입찰 추천
     RECOMMEND_PRICE: "/dop/api/v1/pop/api/v1/recommend-bid/price",
+    
+    // 입찰 관리 (Listing Management)
+    LISTING_LIST: "/dop/api/v1/pop/api/v1/listing/list",
+    CANCEL_BID: "/dop/api/v1/pop/api/v1/cancel-bid/cancel-bidding",
+    AUTO_FOLLOW_LIST: "/dop/api/v1/pop/api/v1/auto-follow-bidding/list",
   }
 } as const;
