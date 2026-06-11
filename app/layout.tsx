@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SaaS 템플릿",
-  description: "Next.js + Clerk + Supabase 보일러플레이트",
+  title: "Poizon Bidding",
+  description: "Poizon 실시간 입찰 관리 시스템",
 };
 
 export default function RootLayout({

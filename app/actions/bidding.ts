@@ -112,3 +112,28 @@ export async function executeBidding(bids: BidPayload[]) {
     return { success: false, error: error.message };
   }
 }
+
+export async function getBidHistoryBySpuIds(spuIds: (string | number)[]) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("Unauthorized");
+
+    const supabase = getServiceRoleClient();
+    const { data: user } = await supabase.from("users").select("id").eq("clerk_id", userId).single();
+    if (!user) throw new Error("사용자 정보를 찾을 수 없습니다.");
+
+    const { data, error } = await supabase
+      .from("bid_history")
+      .select("spu_id, created_at, bid_price")
+      .eq("user_id", user.id)
+      .in("spu_id", spuIds.map(id => Number(id)))
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Get Bid History Error:", error);
+    return { success: false, error: error.message };
+  }
+}

@@ -3,13 +3,14 @@
 import React, { useState, useEffect } from "react";
 import { 
   Search, Loader2, Gavel, ExternalLink, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, ArrowLeftRight, X,
-  Trash2, ChevronLeft, ChevronsLeft, ChevronsRight
+  Trash2, Ban, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, Check, Clock, Filter
 } from "lucide-react";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
-import { executeBidding, type BidPayload } from "@/app/actions/bidding";
+import { executeBidding, getBidHistoryBySpuIds, type BidPayload } from "@/app/actions/bidding";
 import { getSkuRecommendations } from "@/app/actions/recommendations";
 import { getNaverShoppingResults } from "@/app/actions/naver";
 import { getSystemSettings } from "@/app/actions/settings";
+import { getExcludedArticles, addExcludedArticle } from "@/app/actions/excluded-articles";
 import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
 import { MarginSettingsDialog } from "./margin-settings-dialog";
 
@@ -46,12 +47,20 @@ export function SearchBoard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // 품번 제외용 State
+  const [excludedArticles, setExcludedArticles] = useState<string[]>([]);
+  const [isExcludeModalOpen, setIsExcludeModalOpen] = useState(false);
+  const [itemToExclude, setItemToExclude] = useState<{ articleNumber: string, title: string, idx: number } | null>(null);
+  const [excludeReason, setExcludeReason] = useState("");
+  const [isExcluding, setIsExcluding] = useState(false);
+
   // 열 너비 조절 기능
   const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({
     info: 340,
     avg: 100,
     naver: 110,
     exposure: 120,
+    profit: 100,
     salesChina: 90,
     salesLocal: 90,
     bid: 160,
@@ -59,6 +68,10 @@ export function SearchBoard() {
   });
 
   const [resizing, setResizing] = useState<string | null>(null);
+  const [isHeaderVisible, setIsHeaderVisible] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [bidHistory, setBidHistory] = useState<Record<string, { price: number, date: string }>>({});
+  const [showOnlyProfitable, setShowOnlyProfitable] = useState(false);
 
   useEffect(() => {
     const savedWidths = localStorage.getItem('poizon_dashboard_widths');
@@ -108,6 +121,43 @@ export function SearchBoard() {
     fetchSettings();
   }, []);
 
+  // 입찰 이력 동기화 로직
+  const fetchBidHistory = async () => {
+    // 상품 ID와 품번을 함께 추출하여 대조군 형성
+    const identifiers = items.map(item => {
+      const numericId = Number(String(item.id).replace(/[^0-9]/g, ""));
+      return {
+        spuId: isNaN(numericId) ? null : numericId,
+        articleNumber: item.articleNumber
+      };
+    }).filter(id => id.spuId !== null || id.articleNumber);
+
+    if (identifiers.length === 0) return;
+
+    const spuIds = identifiers.map(id => id.spuId).filter((id): id is number => id !== null);
+    const res = await getBidHistoryBySpuIds(spuIds);
+    
+    if (res.success && res.data) {
+      const historyMap: Record<string, { price: number, date: string }> = {};
+      res.data.forEach((entry: any) => {
+        const sId = String(entry.spu_id);
+        if (!historyMap[sId]) {
+          historyMap[sId] = {
+            price: entry.bid_price,
+            date: new Date(entry.created_at).toLocaleDateString('ko-KR', { month: '6', day: 'numeric' }).replace('.', '월').replace('.', '일')
+          };
+        }
+      });
+      setBidHistory(historyMap);
+    }
+  };
+
+  useEffect(() => {
+    if (items.length > 0) {
+      fetchBidHistory();
+    }
+  }, [items]);
+
   const toggleRow = (id: string, skus?: any[]) => {
     const isNowExpanded = !expandedRows[id];
     setExpandedRows(prev => ({ ...prev, [id]: isNowExpanded }));
@@ -120,6 +170,24 @@ export function SearchBoard() {
       });
     }
   };
+
+  React.useEffect(() => {
+    setBiddingPrices(prev => {
+      const next = { ...prev };
+      let changed = false;
+      Object.keys(skuRecommendations).forEach(skuId => {
+        if (!next[skuId]) {
+          const rec = skuRecommendations[skuId];
+          const exposurePr = rec?.leakInfos?.find((l: any) => (l.buyerRegion === "CN" || l.region === "CN"))?.leakPrice ?? rec?.globalMinPrice;
+          if (exposurePr) {
+            next[skuId] = String(exposurePr);
+            changed = true;
+          }
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [skuRecommendations]);
 
   const fetchRecommendation = async (skuId: string | number) => {
     setLoadingRecommendations(prev => ({ ...prev, [skuId]: true }));
@@ -178,6 +246,7 @@ export function SearchBoard() {
       const res = await executeBidding([{ skuId, spuId, price }]);
       if (res.success) {
         alert("입찰 요청이 성공적으로 처리되었습니다.");
+        fetchBidHistory();
       } else {
         const detailMsg = res.data?.[0]?.message || res.error;
         alert(`입찰 실패: ${detailMsg}`);
@@ -212,8 +281,9 @@ export function SearchBoard() {
       if (res.success) {
         alert(`${payloads.length}건의 일괄 입찰 요청이 성공적으로 처리되었습니다.`);
         setSelectedSkus({});
+        fetchBidHistory();
       } else {
-        const failedCount = res.data?.filter((r: any) => !r.success).length || 0;
+        const failedCount = (res.data as any)?.filter?.((r: any) => !r.success)?.length || 0;
         const firstErrorStr = res.data?.find((r: any) => !r.success)?.message || res.error;
         alert(`${failedCount}건 입찰 실패. 대표 사유: ${firstErrorStr}`);
       }
@@ -236,27 +306,79 @@ export function SearchBoard() {
       
       if (searchType === "article") {
         const searchTerms = searchKeyword.split(",").map(k => k.trim()).filter(k => k.length > 0);
-        for (const term of searchTerms) {
-          const res = await searchPoizonItems(term);
+        
+        // 1. 모든 품번을 병렬로 동시 검색 (속도 개선 1)
+        const searchPromises = searchTerms.map(term => searchPoizonItems(term));
+        const searchResults = await Promise.all(searchPromises);
+        
+        const validItemDataList: { data: any, term: string }[] = [];
+        const spuIdsForStats: number[] = [];
+        
+        searchResults.forEach((res, index) => {
           if (res.success && res.data) {
-             let itemData = res.data.data || res.data;
-             if (Array.isArray(itemData)) itemData = itemData[0];
-             
-             if (itemData) {
-               const spuId = Number(itemData.spuInfo?.spuId || itemData.spuId || itemData.goodsId);
-               if (spuId) {
-                  const statsRes = await getSpuStatistics([spuId]);
-                  if (statsRes.success && statsRes.data.length > 0) {
-                     itemData.skuStats = statsRes.data[0].skuSaleInfos || statsRes.data[0].skuInfoList || [];
-                     itemData.spuStats = statsRes.data[0].spuSaleInfo || statsRes.data[0].spuInfo || {};
-                  }
-               }
-               parseAndPushItem(itemData, newItems, term);
-             }
+            let itemData = res.data.data || res.data;
+            if (Array.isArray(itemData)) itemData = itemData[0];
+            
+            if (itemData) {
+              validItemDataList.push({ data: itemData, term: searchTerms[index] });
+              const sId = Number(itemData.spuInfo?.spuId || itemData.spuId || itemData.goodsId);
+              if (sId) spuIdsForStats.push(sId);
+            }
           }
+        });
+
+        // 2. 통계 정보를 한꺼번에 일괄 요청 (속도 개선 2)
+        if (spuIdsForStats.length > 0) {
+          const [statsResKR, statsResCN] = await Promise.all([
+            getSpuStatistics(spuIdsForStats, ["KR"]),
+            getSpuStatistics(spuIdsForStats, ["CN"])
+          ]);
+
+          const statsMapKR = new Map();
+          const statsMapCN = new Map();
+
+          if (statsResKR.success && statsResKR.data.KR) {
+            statsResKR.data.KR.forEach((st: any) => {
+              const id = st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId;
+              if (id) statsMapKR.set(Number(id), st);
+            });
+          }
+          if (statsResCN.success && statsResCN.data.CN) {
+            statsResCN.data.CN.forEach((st: any) => {
+              const id = st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId;
+              if (id) statsMapCN.set(Number(id), st);
+            });
+          }
+
+          // 검색된 데이터에 통계 정보 병합
+          validItemDataList.forEach(itemEntry => {
+            const sId = Number(itemEntry.data.spuInfo?.spuId || itemEntry.data.spuId || itemEntry.data.goodsId);
+            const stKR = statsMapKR.get(sId);
+            const stCN = statsMapCN.get(sId);
+            
+            if (stKR) {
+              itemEntry.data.skuStats = stKR.skuSaleInfos || stKR.skuInfoList || [];
+              itemEntry.data.spuStats = stKR.spuSaleInfo || stKR.spuInfo || {};
+            }
+            if (stCN) {
+              itemEntry.data.spuStatsCN = stCN.spuSaleInfo || stCN.spuInfo || {};
+              itemEntry.data.skuStatsCN = stCN.skuSaleInfos || stCN.skuInfoList || [];
+            }
+          });
         }
-        if (newItems.length > 0) {
-          setItems(prev => [...newItems, ...prev]);
+
+        // 3. 파싱 및 결과 목록에 추가 (네이버 검색은 여기서 순차적으로 트리거됨)
+        validItemDataList.forEach(itemEntry => {
+          parseAndPushItem(itemEntry.data, newItems, itemEntry.term);
+        });
+        
+        const curExcludedRes = await getExcludedArticles();
+        const curExcluded = curExcludedRes.success && curExcludedRes.data ? curExcludedRes.data.map((r: any) => r.article_number) : [];
+        setExcludedArticles(curExcluded);
+        const filteredItems = newItems.filter(item => !curExcluded.includes(item.articleNumber));
+
+        if (filteredItems.length > 0) {
+          setItems(prev => [...filteredItems, ...prev]);
           setKeyword("");
         }
       } else {
@@ -268,34 +390,65 @@ export function SearchBoard() {
           else if (Array.isArray(res.data.data?.list)) results = res.data.data.list;
           else if (Array.isArray(res.data.list)) results = res.data.list;
           else if (Array.isArray(res.data.data)) results = res.data.data;
-          
           if (results.length === 0) {
             setError("검색 결과가 없습니다.");
             if (page === 1) setItems([]);
           } else {
-            const spuIds = [...new Set(results.map(i => Number(i.spuId || i.goodsId)).filter(id => !isNaN(id)))];
-            const statsRes = await getSpuStatistics(spuIds);
-            
-            if (statsRes.success && statsRes.data) {
-               const statsMap = new Map();
-               for (const statItem of statsRes.data) {
-                  const spuData = statItem.spuSaleInfo || statItem.spuInfo || statItem;
-                  const sId = Number(spuData?.spuId || spuData?.goodsId);
-                  if (sId) statsMap.set(sId, statItem);
-               }
-               results = results.map(item => {
-                  const sId = Number(item.spuId || item.goodsId);
-                  const st = statsMap.get(sId);
-                  return { ...item, skuStats: st?.skuInfoList || st?.skuSaleInfos || [], spuStats: st?.spuSaleInfo || st?.spuInfo || st || {} };
-               });
+            const spuIds = results.map((item: any) => item.spuId || item.goodsId).filter(Boolean);
+            if (spuIds.length > 0) {
+              const [statsResKR, statsResCN] = await Promise.all([
+                getSpuStatistics(spuIds, ["KR"]),
+                getSpuStatistics(spuIds, ["CN"])
+              ]);
+              
+              const statsMapKR = new Map();
+              const statsMapCN = new Map();
+
+              const dataKR = statsResKR.success ? statsResKR.data.KR : [];
+              const dataCN = statsResCN.success ? statsResCN.data.CN : [];
+
+              if (statsResKR.success && dataKR) {
+                 for (const statItem of dataKR) {
+                    const spuData = statItem.spuSaleInfo || statItem.spuInfo || statItem;
+                    const sId = Number(spuData?.spuId || spuData?.goodsId);
+                    if (sId) statsMapKR.set(sId, statItem);
+                 }
+              }
+              
+              if (statsResCN.success && dataCN) {
+                 for (const statItem of dataCN) {
+                    const spuData = statItem.spuSaleInfo || statItem.spuInfo || statItem;
+                    const sId = Number(spuData?.spuId || spuData?.goodsId);
+                    if (sId) statsMapCN.set(sId, statItem);
+                 }
+              }
+
+              results = results.map(item => {
+                 const sId = Number(item.spuId || item.goodsId);
+                 const stKR = statsMapKR.get(sId);
+                 const stCN = statsMapCN.get(sId);
+                 return { 
+                   ...item, 
+                   skuStats: stKR?.skuInfoList || stKR?.skuSaleInfos || [], 
+                   spuStats: stKR?.spuSaleInfo || stKR?.spuInfo || stKR || {},
+                   spuStatsCN: stCN?.spuSaleInfo || stCN?.spuInfo || stCN || {},
+                   skuStatsCN: stCN?.skuInfoList || stCN?.skuSaleInfos || []
+                 };
+              });
             }
+
 
             for (const item of results) {
               parseAndPushItem(item, newItems, searchKeyword);
             }
             
-            setItems(newItems);
-            setTotalCount(res.total || 0);
+            const curExcludedRes = await getExcludedArticles();
+            const curExcluded = curExcludedRes.success && curExcludedRes.data ? curExcludedRes.data.map((r: any) => r.article_number) : [];
+            setExcludedArticles(curExcluded);
+            const filteredItems = newItems.filter(item => !curExcluded.includes(item.articleNumber));
+            
+            setItems(filteredItems);
+            setTotalCount(res.total || 0); // 참고용
             setCurrentPage(page);
             setLastBrandKeyword(searchKeyword);
             if (page === 1) setKeyword("");
@@ -332,73 +485,172 @@ export function SearchBoard() {
     const spuInfo = apiData.spuInfo || apiData.spuList?.[0] || apiData.spuDetails || apiData;
     const skuList = apiData.skuInfoList || apiData.skuList || apiData.skus || spuInfo.skuList || [];
     
-    if (!spuInfo.spuId && !spuInfo.goodsId && !spuInfo.title) return;
+    if (!spuInfo?.title && !rawData?.title) return;
     
-    const articleNum = spuInfo.articleNumber || spuInfo.goodsNo || term || "N/A";
+    const articleNum = spuInfo.articleNumber || spuInfo.goodsNo || rawData.articleNumber || term || "N/A";
+    const spuIdRaw = spuInfo.spuId || spuInfo.goodsId || rawData.spuId || rawData.goodsId;
+    const finalId = spuIdRaw ? String(spuIdRaw) : term;
     
     // 네이버 검색 트리거 (이미 검색 중인 경우 제외)
     if (articleNum !== "N/A" && !naverResults[articleNum] && !loadingNaver[articleNum]) {
       fetchNaverPrice(articleNum);
     }
 
+    // 자식(SKU)들의 판매량을 합산하여 SPU 전체 판매량 정의 (HK 데이터 우선)
+    const skusKR = rawData.skuStats || [];
+    const skusHK = rawData.skuStatsHK || [];
+    
+    // 중국 시장 총 판매량: 홍콩(HK) 글로벌 판매량이 0이면 HK SKU 합산, 그것도 0이면 KR 정보
+    const spuSalesHK = rawData.spuStatsHK?.commoditySales || {};
+    const sumHKGlobal = skusHK.reduce((sum: number, s: any) => sum + (s.commoditySales?.globalSoldNum30 || 0), 0);
+    const totalSalesValue = spuSalesHK.globalSoldNum30 || sumHKGlobal || rawData.spuStats?.commoditySales?.globalSoldNum30 || 0;
+
+    // 현지 판매자 판매량: 한국(KR) 로컬 판매량 우선, 0이면 KR SKU의 로컬 합산 (마마의 8, 12건 추적용)
+    const spuSalesKR = rawData.spuStats?.commoditySales || {};
+    const sumKRLocal = skusKR.reduce((sum: number, s: any) => sum + (s.commoditySales?.localSoldNum30 || 0), 0);
+    const localSalesValue = spuSalesKR.localSoldNum30 || sumKRLocal || 0;
+
     targetArray.push({
-      id: spuInfo.spuId || spuInfo.goodsId || term,
+      id: finalId,
       articleNumber: articleNum,
       brand: spuInfo.brandName || spuInfo.brand || "-",
       category: spuInfo.level2CategoryName || spuInfo.categoryName || "-",
-      title: spuInfo.title || spuInfo.spuTitle || spuInfo.goodsName || "Unknown Product",
+      title: spuInfo.title || spuInfo.spuTitle || spuInfo.goodsName || rawData.title || "Unknown Product",
       image: spuInfo.logoUrl || spuInfo.images?.[0] || spuInfo.image || spuInfo.imgUrl || skuList[0]?.image || null,
       skus: skuList,
       raw: rawData,
-      salesVolume: rawData.spuStats?.commoditySales?.totalSoldNum30 ??
-                   rawData.spuStats?.commoditySales?.soldNum30 ?? 
-                   rawData.spuStats?.commoditySales?.globalSoldNum30 ?? 
-                   rawData.spuStats?.salesAmount ?? "-",
-      localSalesVolume: rawData.spuStats?.commoditySales?.localSoldNum30 ?? 
-                        rawData.spuStats?.commoditySales?.soldNum ?? "-",
-      minPrice: rawData.spuStats?.marketPrice?.globalMarketPriceVO?.amountText ?? 
-                rawData.spuStats?.minPrice?.globalMinPriceVO?.amountText ?? 
-                rawData.spuStats?.minPrice?.price ?? 
-                rawData.spuStats?.authPriceVO?.amountText ??
-                rawData.spuStats?.authPrice?.amount ?? "-",
-      avgPrice: rawData.spuStats?.averagePrice?.averagePriceVO?.amountText ??
-                rawData.spuStats?.averagePrice?.averagePrice?.amount ??
-                rawData.spuStats?.averagePrice?.globalAveragePriceVO?.amountText ?? 
-                rawData.spuStats?.averagePrice?.globalAveragePrice?.amount ?? "-",
-      skuDetails: rawData.skuStats || [],
+      salesVolume: totalSalesValue > 0 ? `${totalSalesValue.toLocaleString()}${totalSalesValue >= 500 ? "+" : ""}` : "-",
+      localSalesVolume: localSalesValue > 0 ? `${localSalesValue.toLocaleString()}` : "-",
+      minPrice: (() => {
+        const pr = rawData.spuStats?.marketPrice?.globalMarketPriceVO?.amountText ?? 
+                  rawData.spuStats?.minPrice?.globalMinPriceVO?.amountText ?? 
+                  rawData.spuStats?.minPrice?.price ?? 
+                  rawData.spuStats?.authPriceVO?.amountText ??
+                  rawData.spuStats?.authPrice?.amount;
+        if (!pr) return "-";
+        if (typeof pr === 'string' && pr.includes('₩')) return pr;
+        const num = Number(String(pr).replace(/[^0-9]/g, ""));
+        return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
+      })(),
+      avgPrice: (() => {
+        const pr = rawData.spuStats?.averagePrice?.averagePriceVO?.amountText ??
+                  rawData.spuStats?.averagePrice?.averagePrice?.amount ??
+                  rawData.spuStats?.averagePrice?.globalAveragePriceVO?.amountText ?? 
+                  rawData.spuStats?.averagePrice?.globalAveragePrice?.amount;
+        if (!pr) return "-";
+        if (typeof pr === 'string' && pr.includes('₩')) return pr;
+        const num = Number(String(pr).replace(/[^0-9]/g, ""));
+        return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
+      })(),
+
+      skuDetails: skusKR,
+      skuDetailsHK: skusHK,
       spuStats: rawData.spuStats || {},
+      spuStatsHK: rawData.spuStatsHK || {},
     });
+
   };
 
   const removeItem = (indexToRemove: number) => {
     setItems(items.filter((_, idx) => idx !== indexToRemove));
   };
 
+  const handleExcludeSubmit = async () => {
+    if (!itemToExclude) return;
+    setIsExcluding(true);
+    try {
+      const res = await addExcludedArticle(itemToExclude.articleNumber, itemToExclude.title, excludeReason);
+      if (res.success) {
+        setExcludedArticles(prev => [...prev, itemToExclude.articleNumber]);
+        removeItem(itemToExclude.idx);
+        setIsExcludeModalOpen(false);
+      } else {
+        alert(`제외 처리 실패: ${res.error}`);
+      }
+    } catch (e: any) {
+      alert(`오류: ${e.message}`);
+    } finally {
+      setIsExcluding(false);
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col gap-2 w-full">
-      {/* Search Header - Compact */}
-      <div className="bg-card border border-secondary/40 rounded-xl p-4 shadow-sm">
-        <div className="flex flex-col md:flex-row gap-3">
-          <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0">
-            <button onClick={() => setSearchType("article")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
-            <button onClick={() => setSearchType("brand")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
+    <div className="h-full flex flex-col gap-2 w-full relative">
+      {/* Search Header - Hover to Expand Area */}
+      <div 
+        className="relative z-30 transition-all duration-500 ease-in-out overflow-hidden"
+        style={{ 
+          maxHeight: (isHeaderVisible || isInputFocused) ? '200px' : '6px',
+          opacity: (isHeaderVisible || isInputFocused) ? 1 : 0.6,
+          marginBottom: (isHeaderVisible || isInputFocused) ? '12px' : '0'
+        }}
+        onMouseEnter={() => setIsHeaderVisible(true)}
+        onMouseLeave={() => setIsHeaderVisible(false)}
+      >
+        <div className={`bg-card border ${isInputFocused ? 'border-primary/50 shadow-lg' : 'border-secondary/40 shadow-md'} rounded-xl p-4 mb-2 transition-all duration-300`}>
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0">
+              <button onClick={() => setSearchType("article")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
+              <button onClick={() => setSearchType("brand")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
+            </div>
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+              <input 
+                type="text" 
+                value={keyword} 
+                onChange={(e) => setKeyword(e.target.value)} 
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()} 
+                onFocus={() => setIsInputFocused(true)}
+                onBlur={() => setIsInputFocused(false)}
+                placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"} 
+                className="w-full pl-9 pr-4 py-2 bg-secondary/30 border-none rounded-lg outline-none text-[13px] focus:ring-1 focus:ring-primary/20" 
+              />
+            </div>
+            <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors shadow-sm">조회</button>
           </div>
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
-            <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearch()} placeholder={searchType === "article" ? "품번 (콤마 구분)" : "브랜드명"} className="w-full pl-9 pr-4 py-2 bg-secondary/30 border-none rounded-lg outline-none text-[13px]" />
-          </div>
-          <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold disabled:opacity-50">조회</button>
         </div>
+        
+        {/* 숨겨졌을 때 나타나는 힌트 라인 - 더욱 고급스럽게 */}
+        {!(isHeaderVisible || isInputFocused) && (
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary/40 to-transparent animate-pulse" />
+        )}
       </div>
+
+      {/* 감지 영역 */}
+      {!(isHeaderVisible || isInputFocused) && (
+        <div 
+          className="absolute top-0 left-0 right-0 h-4 z-40 cursor-n-resize"
+          onMouseEnter={() => setIsHeaderVisible(true)}
+        />
+      )}
 
       {/* Workspace Area - Full Width */}
       <div className="flex-1 bg-card border border-secondary/40 rounded-xl shadow-sm flex flex-col overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b bg-secondary/5">
-          <div className="flex items-center gap-3">
-            <h2 className="text-base font-semibold tracking-tight">비딩 워크스페이스</h2>
-            <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{items.length} 건</span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold tracking-tight">비딩 워크스페이스</h2>
+              <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{items.length} 건</span>
+            </div>
+            {error && (
+              <div className="flex items-center gap-1.5 text-destructive font-bold text-[11px] animate-pulse">
+                <AlertCircle size={14} />
+                {error}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setShowOnlyProfitable(!showOnlyProfitable)}
+              className={`text-[11px] px-3 py-1.5 border rounded-lg flex items-center gap-1.5 transition-all font-bold ${
+                showOnlyProfitable 
+                ? "bg-blue-500/10 border-blue-500/50 text-blue-600 shadow-sm" 
+                : "border-secondary hover:bg-secondary text-muted-foreground"
+              }`}
+            >
+              <Filter size={14} className={showOnlyProfitable ? "fill-blue-600/10" : ""} />
+              수익 상품만 보기
+            </button>
             <button 
               onClick={saveWidths}
               className="text-[11px] px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5 flex items-center gap-1.5 transition-colors font-bold"
@@ -446,6 +698,14 @@ export function SearchBoard() {
                   <span>네이버 최저/원가</span>
                   <div onMouseDown={(e) => handleResizeStart(e, 'naver')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
+
+                <th style={{ width: `${columnWidths.profit}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-blue-500/[0.04]">
+                  <div className="flex flex-col leading-tight -space-y-0.5">
+                    <span>순수익</span>
+                    <span className="text-[9px] opacity-60">(노출가-수수료-원가)</span>
+                  </div>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'profit')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
                 
                 <th style={{ width: `${columnWidths.salesChina}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
                   <div className="flex flex-col leading-tight -space-y-1">
@@ -475,23 +735,56 @@ export function SearchBoard() {
             </thead>
             <tbody className="divide-y divide-secondary/10">
               {items.length === 0 ? (
-                <tr><td colSpan={8} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">검색을 시작해 주소서.</td></tr>
+                <tr><td colSpan={10} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">검색을 시작해 주소서.</td></tr>
               ) : (
                 items.map((item, idx) => {
+                  const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                  const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
+                  
+                  // 수익 계산 로직 (필터링용)
+                  let profit = -999999;
+                  if (naverPrice && !isNaN(poizonPriceNum) && poizonPriceNum > 0 && systemSettings) {
+                    const { fee } = calculateMargin(poizonPriceNum, systemSettings);
+                    profit = poizonPriceNum - fee - Number(naverPrice);
+                  }
+
+                  // 필터링 적용: '수익 상품만 보기' 활성화 시 수익이 0 이하인 항목은 숨김
+                  if (showOnlyProfitable && profit <= 0) return null;
+
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isExpanded = !!expandedRows[item.id];
                   return (
                     <React.Fragment key={`${item.articleNumber}-${idx}`}>
                       <tr className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''}`}>
                         <td className="px-1 text-center border-r border-secondary/10">
-                         <div className="flex flex-col items-center gap-1.5">
-                           <input type="checkbox" className="w-3 h-3" />
-                           {item.skuDetails?.length > 0 && (
-                             <button onClick={() => toggleRow(item.id, item.skuDetails)} className="text-muted-foreground/40 hover:text-primary transition-colors">
-                               {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                             </button>
-                           )}
-                         </div>
+                          <div className="flex flex-col items-center gap-2 py-1">
+                            <input type="checkbox" className="w-3.5 h-3.5 accent-primary cursor-pointer" />
+                            
+                            {/* 입찰 이력 아이콘 및 툴팁 */}
+                            {bidHistory[String(item.id)] ? (
+                              <div className="relative group/bid-history">
+                                <div className="p-1 text-blue-500 bg-blue-500/10 rounded-full cursor-help hover:bg-blue-500/20 transition-colors">
+                                  <Clock size={12} strokeWidth={3} />
+                                </div>
+                                {/* 입찰 정보 툴팁 */}
+                                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 hidden group-hover/bid-history:block z-[60] animate-in fade-in slide-in-from-left-1 duration-200">
+                                  <div className="bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded shadow-xl whitespace-nowrap font-bold flex items-center gap-1.5 border border-white/10">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                                    입찰 완료 (₩{bidHistory[String(item.id)].price.toLocaleString()}, {bidHistory[String(item.id)].date})
+                                  </div>
+                                  <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
+                                </div>
+                              </div>
+                            ) : (
+                                <div className="w-4 h-4" /> // 이력이 없을 때 정렬 유지용
+                            )}
+
+                            {item.skuDetails?.length > 0 && (
+                              <button onClick={() => toggleRow(item.id, item.skuDetails)} className="text-muted-foreground/30 hover:text-primary transition-colors p-1">
+                                {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 border-r border-secondary/10 overflow-hidden">
                           <div className="flex items-center gap-3">
@@ -505,32 +798,30 @@ export function SearchBoard() {
                                 <span className="font-bold text-foreground text-[12px] truncate tracking-tight">{item.title}</span>
                               </div>
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
-                                <span className="font-mono text-primary/70">{item.articleNumber}</span>
+                                <CopyableArticleNumber articleNumber={item.articleNumber} />
                                 <span className="opacity-30">|</span>
                                 <span>{item.category}</span>
-                                {isBiddable && <span className="ml-1 bg-emerald-500/10 text-emerald-600 text-[8px] px-1 py-0.5 rounded border border-emerald-500/20">입찰 가능</span>}
+                                {isBiddable && <span className="ml-1 bg-emerald-500/10 text-emerald-600 text-[8px] px-1 py-0.5 rounded border border-emerald-500/20 font-bold">입찰 가능</span>}
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01] font-bold text-foreground/80">
-                          {item.avgPrice !== "-" ? (typeof item.avgPrice === 'string' && item.avgPrice.includes('₩') ? item.avgPrice : `₩${Number(item.avgPrice).toLocaleString()}`) : "—"}
+                          {item.avgPrice}
                         </td>
                         <td className="px-1 text-center border-r border-secondary/10 bg-orange-500/[0.01] leading-none">
                             <div className="font-bold text-[11px] text-orange-600/80 mb-0.5 italic shrink-0">
-                                {item.minPrice !== "-" ? (typeof item.minPrice === 'string' && item.minPrice.includes('₩') ? item.minPrice : `₩${Number(item.minPrice).toLocaleString()}`) : "—"}
+                                {item.minPrice}
                             </div>
-                            {naverResults[item.articleNumber]?.length > 0 && item.minPrice !== "-" && (
+                            {naverResults[item.articleNumber]?.length > 0 && item.minPrice !== "—" && (
                               (() => {
                                 const naverPrice = Number(naverResults[item.articleNumber][0].lprice);
                                 if (isNaN(naverPrice)) return null;
                                 
-                                const rawPriceStr = typeof item.minPrice === 'string' ? item.minPrice.replace(/[^0-9]/g, "") : String(item.minPrice);
-                                const poizonPrice = Number(rawPriceStr);
+                                const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
+                                if (isNaN(poizonPriceNum) || poizonPriceNum <= 0) return null;
                                 
-                                if (isNaN(poizonPrice) || poizonPrice <= 0) return null;
-                                
-                                const potentialMargin = calculateMargin(poizonPrice, systemSettings);
+                                const potentialMargin = calculateMargin(poizonPriceNum, systemSettings || {} as any);
                                 const estimatedProfit = potentialMargin.netProfit - naverPrice;
                                 return (
                                   <span className={`text-[9px] font-bold ${estimatedProfit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
@@ -560,6 +851,27 @@ export function SearchBoard() {
                             )}
                           </div>
                         </td>
+                        {/* 순수익 컬럼: 포이즌 노출가 - 수수료 - 네이버 최저가 */}
+                        <td className="px-1 text-center border-r border-secondary/10 bg-blue-500/[0.02]">
+                          {(() => {
+                            const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                            if (!naverPrice || item.minPrice === "—" || !systemSettings) return <span className="opacity-20 text-[11px]">—</span>;
+                            const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
+                            if (isNaN(poizonPriceNum) || poizonPriceNum <= 0) return <span className="opacity-20 text-[11px]">—</span>;
+                            const { fee } = calculateMargin(poizonPriceNum, systemSettings);
+                            const profit = poizonPriceNum - fee - Number(naverPrice);
+                            return (
+                              <div className="flex flex-col items-center leading-none gap-0.5">
+                                <span className={`font-bold text-[12px] ${profit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
+                                  {profit > 0 ? '▲' : '▼'} ₩{Math.abs(Math.round(profit)).toLocaleString()}
+                                </span>
+                                <span className="text-[9px] text-muted-foreground/40 font-bold">
+                                  수수료 ₩{fee.toLocaleString()}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01]">
                           <div className="font-bold text-[11px] text-foreground/70">{item.salesVolume}</div>
                         </td>
@@ -568,7 +880,18 @@ export function SearchBoard() {
                         </td>
                         <td className="px-1 text-center border-r border-secondary/10 text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
                         <td className="px-1 text-center border-secondary/10">
-                          <button onClick={() => removeItem(idx)} className="p-1.5 text-muted-foreground/20 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all mx-auto"><Trash2 size={14}/></button>
+                          <div className="flex items-center justify-center gap-0.5">
+                            <button 
+                              onClick={() => {
+                                setItemToExclude({ articleNumber: item.articleNumber, title: item.title, idx });
+                                setExcludeReason("");
+                                setIsExcludeModalOpen(true);
+                              }} 
+                              title="이 품번 검색에서 영구 제외"
+                              className="p-1.5 text-muted-foreground/30 hover:text-orange-500 hover:bg-orange-500/5 rounded-md transition-all"
+                            ><Ban size={14}/></button>
+                            <button onClick={() => removeItem(idx)} title="목록에서 임시 삭제" className="p-1.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all"><Trash2 size={14}/></button>
+                          </div>
                         </td>
                       </tr>
 
@@ -578,90 +901,129 @@ export function SearchBoard() {
                         const propsRaw = sku.regionSalePvInfoList || sku.properties || [];
                         const propsStr = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ");
                         const skuPrice = sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price ?? "—";
-                        const exposurePrice = rec?.priceRangeItems?.find((p: any) => p.title?.includes("노출"))?.price;
-                         const bidPrice = biddingPrices[sku.skuId];
-                         const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
-                         const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
-                         
-                         return (
-                           <tr key={sku.skuId} className="bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20">
-                             <td className="border-r border-secondary/5 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
-                             <td className="px-4 border-r border-secondary/5 border-dashed">
-                               <div className="flex items-center gap-3 pl-6">
-                                 <div className="w-8 h-8 bg-white border border-secondary/10 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
-                                   {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-5"/>}
-                                 </div>
-                                 <div className="flex flex-col min-w-0 leading-tight">
-                                   <div className="flex items-center gap-2">
-                                     <span className="font-bold text-foreground/70 truncate">{propsStr}</span>
-                                     <span className="bg-emerald-500/5 text-emerald-600/60 text-[8px] px-1 py-0.5 rounded border border-emerald-500/10 font-bold shrink-0">입찰 가능</span>
-                                   </div>
-                                   <span className="text-[9px] text-muted-foreground/40 font-mono tracking-tighter">SKUID: {sku.skuId}</span>
-                                 </div>
-                               </div>
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.01] font-bold text-foreground/60 leading-tight">
-                               <div className="text-[11px]">
-                                 {(() => {
-                                   const avgObj = sku.averagePrice;
-                                   const avg = avgObj?.averagePrice?.amount || avgObj?.globalAveragePrice?.amount || 0;
-                                   return avg > 0 ? `₩${Number(avg).toLocaleString()}` : "—";
-                                 })()}
-                               </div>
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-orange-500/[0.01] leading-none">
-                               <div className="cursor-pointer hover:underline font-bold text-orange-600/70 block mb-0.5 text-[11px]" onClick={() => (rec?.globalMinPrice || skuPrice) && handleBiddingPriceChange(sku.skuId, String(rec?.globalMinPrice || skuPrice))}>
-                                 {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto opacity-20"/> : (typeof (rec?.globalMinPrice || skuPrice) === 'number' ? `₩${(rec?.globalMinPrice || skuPrice).toLocaleString()}` : (rec?.globalMinPrice || skuPrice))}
-                               </div>
-                               {margin && (
-                                 <span className={`text-[8px] font-bold ${margin.actualProfit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
-                                   수익: ₩{Math.round(margin.actualProfit).toLocaleString()}
-                                 </span>
-                               )}
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-emerald-500/[0.01] font-bold text-emerald-600/70">
-                                <div className="flex flex-col items-center justify-center">
-                                  {naverPrice ? (
-                                    <span className="hover:underline cursor-pointer">₩{Number(naverPrice).toLocaleString()}</span>
-                                  ) : <span className="opacity-10">—</span>}
+                        const bidPrice = biddingPrices[sku.skuId];
+                        const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                        const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
+                        
+                        return (
+                          <tr key={sku.skuId} className="bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20">
+                            <td className="border-r border-secondary/5 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
+                            <td className="px-4 border-r border-secondary/5 border-dashed">
+                              <div className="flex items-center gap-3 pl-6">
+                                <div className="w-8 h-8 bg-white border border-secondary/10 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
+                                  {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-5"/>}
                                 </div>
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.01]">
-                               <div className="font-bold text-[11px] text-foreground/40">{sku.commoditySales?.totalSoldNum30 ?? sku.commoditySales?.soldNum30 ?? sku.commoditySales?.globalSoldNum30 ?? "—"}</div>
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-secondary/[0.01]">
-                               <div className="font-bold text-[11px] text-foreground/40">{sku.commoditySales?.localSoldNum30 ?? sku.commoditySales?.soldNum ?? "—"}</div>
-                             </td>
-                             <td className="px-1 text-center border-r border-dashed bg-blue-500/[0.01]">
-                               <div className="flex items-center justify-between px-2 gap-2">
-                                 {margin ? (
-                                   <div className="flex flex-col items-center leading-none gap-0.5 min-w-[50px]">
-                                     <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
-                                       {margin.actualProfit > 0 ? "▲" : "▼"} ₩{Math.round(margin.actualProfit).toLocaleString()}
-                                     </span>
-                                     <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
-                                   </div>
-                                 ) : <div className="min-w-[50px] opacity-10 text-[9px] font-bold">READY</div>}
-                                 
-                                 <div className="flex flex-col items-center justify-center flex-1">
-                                   <div className="relative group/input w-full max-w-[100px] mx-auto">
-                                     <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
-                                     <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">₩</span>
-                                   </div>
-                                   {bidPrice && <span className="text-[8px] text-muted-foreground/40 mt-0.5 font-bold uppercase tracking-tighter">NET: ₩{calculateNet(bidPrice, naverPrice ? Number(naverPrice) : undefined)?.toLocaleString()}</span>}
-                                 </div>
-                               </div>
-                             </td>
-                            <td className="px-2 text-center">
-                              <button 
-                                onClick={() => handleSingleBid(sku.skuId, item.id)} 
-                                disabled={!bidPrice || isBidding} 
-                                className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic mx-auto block"
-                              >
-                                BID
-                              </button>
+                                <div className="flex flex-col min-w-0 leading-tight">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-foreground/70 truncate">{propsStr}</span>
+                                    <span className="bg-emerald-500/5 text-emerald-600/60 text-[8px] px-1 py-0.5 rounded border border-emerald-500/10 font-bold shrink-0">입찰 가능</span>
+                                  </div>
+                                  <span className="text-[9px] text-muted-foreground/40 font-mono tracking-tighter">SKUID: {sku.skuId}</span>
+                                </div>
+                              </div>
                             </td>
-                          </tr>
+                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.01] font-bold text-foreground/60 leading-tight">
+                              <div className="text-[11px]">
+                                {(() => {
+                                  const avgObj = sku.averagePrice;
+                                  const avg = avgObj?.averagePrice?.amount || avgObj?.globalAveragePrice?.amount || 0;
+                                  return avg > 0 ? `₩${Number(avg).toLocaleString()}` : "—";
+                                })()}
+                              </div>
+                            </td>
+                            <td className="px-1 text-center border-r border-dashed bg-orange-500/[0.01] leading-none">
+                              <div className="cursor-pointer hover:underline font-bold text-orange-600/70 block mb-0.5 text-[11px]" onClick={() => {
+                                const exposurePr = rec?.leakInfos?.find((l: any) => l.buyerRegion === "CN")?.leakPrice ?? rec?.globalMinPrice ?? skuPrice;
+                                handleBiddingPriceChange(sku.skuId, String(exposurePr));
+                              }}>
+                                {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto opacity-20"/> : (
+                                  (() => {
+                                    const exposurePr = rec?.leakInfos?.find((l: any) => l.buyerRegion === "CN")?.leakPrice;
+                                    const displayPr = exposurePr ?? rec?.globalMinPrice ?? skuPrice;
+                                    return typeof displayPr === 'number' ? `₩${displayPr.toLocaleString()}` : displayPr;
+                                  })()
+                                )}
+                              </div>
+                              {margin && (
+                                <span className={`text-[8px] font-bold ${margin.actualProfit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
+                                  수익: ₩{Math.round(margin.actualProfit).toLocaleString()}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-1 text-center border-r border-dashed bg-emerald-500/[0.01] font-bold text-emerald-600/70">
+                               <div className="flex flex-col items-center justify-center">
+                                 {naverPrice ? (
+                                   <span className="hover:underline cursor-pointer">₩{Number(naverPrice).toLocaleString()}</span>
+                                 ) : <span className="opacity-10">—</span>}
+                               </div>
+                            </td>
+                            {/* SKU 순수익 컬럼 */}
+                            <td className="px-1 text-center border-r border-dashed bg-blue-500/[0.02]">
+                              {(() => {
+                                if (!naverPrice || !systemSettings) return <span className="opacity-10 text-[11px]">—</span>;
+                                const rawSkuPrice = String(rec?.globalMinPrice || skuPrice || "").replace(/[^0-9]/g, "");
+                                const poizonSkuPrice = Number(rawSkuPrice);
+                                if (isNaN(poizonSkuPrice) || poizonSkuPrice <= 0) return <span className="opacity-10 text-[11px]">—</span>;
+                                const { fee: skuFee } = calculateMargin(poizonSkuPrice, systemSettings);
+                                const skuProfit = poizonSkuPrice - skuFee - Number(naverPrice);
+                                return (
+                                  <div className="flex flex-col items-center leading-none gap-0.5">
+                                    <span className={`font-bold text-[11px] ${skuProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
+                                      {skuProfit > 0 ? '▲' : '▼'} ₩{Math.abs(Math.round(skuProfit)).toLocaleString()}
+                                    </span>
+                                    <span className="text-[9px] text-muted-foreground/40 font-bold">수수료 ₩{skuFee.toLocaleString()}</span>
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-1 text-center border-r border-dashed bg-primary/[0.01]">
+                              <div className="font-bold text-[11px] text-foreground/40">
+                                {(() => {
+                                  const skuCN = item.skuDetailsCN?.find((s: any) => s.skuId === sku.skuId);
+                                  const val = skuCN?.commoditySales?.globalSoldNum30 ?? sku.commoditySales?.globalSoldNum30;
+                                  return val !== undefined ? `${val.toLocaleString()}` : "—";
+                                })()}
+                              </div>
+                            </td>
+                            <td className="px-1 text-center border-r border-dashed bg-secondary/[0.01]">
+                              <div className="font-bold text-[11px] text-foreground/40">
+                                {(() => {
+                                  const skuCN = item.skuDetailsCN?.find((s: any) => s.skuId === sku.skuId);
+                                  const val = skuCN?.commoditySales?.localSoldNum30 ?? sku.commoditySales?.localSoldNum30;
+                                  return val !== undefined ? `${val.toLocaleString()}` : "—";
+                                })()}
+                              </div>
+                            </td>
+                            <td className="px-1 text-center border-r border-dashed bg-blue-500/[0.01]">
+                              <div className="flex items-center justify-between px-2 gap-2">
+                                {margin ? (
+                                  <div className="flex flex-col items-center leading-none gap-0.5 min-w-[50px]">
+                                    <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
+                                      {margin.actualProfit > 0 ? "▲" : "▼"} ₩{Math.round(margin.actualProfit).toLocaleString()}
+                                    </span>
+                                    <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
+                                  </div>
+                                ) : <div className="min-w-[50px] opacity-10 text-[9px] font-bold">READY</div>}
+                                
+                                <div className="flex flex-col items-center justify-center flex-1">
+                                  <div className="relative group/input w-full max-w-[100px] mx-auto">
+                                    <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
+                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">₩</span>
+                                  </div>
+                                  {bidPrice && <span className="text-[8px] text-muted-foreground/40 mt-0.5 font-bold uppercase tracking-tighter">NET: ₩{calculateNet(bidPrice, naverPrice ? Number(naverPrice) : undefined)?.toLocaleString()}</span>}
+                                </div>
+                              </div>
+                            </td>
+                           <td className="px-2 text-center">
+                             <button 
+                               onClick={() => handleSingleBid(sku.skuId, item.id)} 
+                               disabled={!bidPrice || isBidding} 
+                               className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic mx-auto block"
+                             >
+                               BID
+                             </button>
+                           </td>
+                         </tr>
                         );
                       })}
                     </React.Fragment>
@@ -672,7 +1034,7 @@ export function SearchBoard() {
           </table>
         </div>
 
-        {/* Pagination - Mini */}
+        {/* Pagination */}
         {searchType === "brand" && totalCount > pageSize && (
           <div className="px-4 py-2 border-t bg-secondary/10 flex items-center justify-between text-xs">
             <div className="text-muted-foreground">총 {totalCount.toLocaleString()}개</div>
@@ -689,69 +1051,35 @@ export function SearchBoard() {
 
       {/* Naver Search Results Modal */}
       {isModalOpen && selectedNaverItems && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-background border border-secondary shadow-2xl rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 text-[13px]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-background border border-secondary shadow-2xl rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden text-[13px]">
             <div className="flex items-center justify-between p-4 border-b bg-secondary/10">
-              <div className="flex flex-col">
-                <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                  <div className="w-5 h-5 bg-emerald-500 rounded flex items-center justify-center text-white text-[10px] font-bold">N</div>
-                  네이버 쇼핑 검색 결과
-                </h3>
-                <p className="text-xs text-muted-foreground font-medium mt-0.5">메이저 종합몰 • 낮은 가격순 정렬</p>
-              </div>
+              <h3 className="text-lg font-bold tracking-tight">네이버 쇼핑 검색 결과</h3>
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-secondary/20 rounded-full transition-colors">
                 <X size={20} className="text-muted-foreground" />
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-secondary/5">
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
               <div className="grid gap-3">
-                {selectedNaverItems.length > 0 ? (
-                  selectedNaverItems.map((item, i) => (
-                    <a 
-                      key={i} 
-                      href={item.link} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-4 p-3 bg-card hover:bg-white border border-secondary/30 rounded-xl transition-all group shadow-sm hover:shadow-md"
-                    >
-                      <div className="w-16 h-16 bg-white border border-secondary/10 rounded-lg overflow-hidden shrink-0 shadow-xs p-1">
-                        <img src={item.image} className="w-full h-full object-contain" />
+                {selectedNaverItems.map((item, i) => (
+                  <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 bg-card hover:bg-white border rounded-xl transition-all group">
+                    <div className="w-16 h-16 bg-white border rounded-lg overflow-hidden shrink-0 shadow-xs p-1">
+                      <img src={item.image} className="w-full h-full object-contain" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-emerald-500/10 text-emerald-600 text-[10px] px-1.5 py-0.5 rounded font-bold">{item.mallName}</span>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="bg-emerald-500/10 text-emerald-600 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-tight">{item.mallName}</span>
-                          <span className="text-[10px] text-muted-foreground/50 font-medium">{item.category3}</span>
-                        </div>
-                        <h4 className="text-[13px] font-bold text-foreground/80 truncate group-hover:text-primary transition-colors" dangerouslySetInnerHTML={{ __html: item.title }} />
-                        <div className="mt-2 text-lg font-black text-foreground/90 tracking-tight">
-                          ₩{Number(item.lprice).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="px-2">
-                        <div className="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-all">
-                          <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
-                        </div>
-                      </div>
-                    </a>
-                  ))
-                ) : (
-                  <div className="py-24 flex flex-col items-center justify-center text-muted-foreground bg-card rounded-2xl border border-dashed border-secondary/50">
-                    <Search className="w-8 h-8 opacity-10 mb-2" />
-                    <p className="text-[13px] font-medium opacity-40">화이트리스트에 등록된 종합몰 결과가 없습니다.</p>
-                  </div>
-                )}
+                      <h4 className="text-[13px] font-bold truncate" dangerouslySetInnerHTML={{ __html: item.title }} />
+                      <div className="mt-1 text-lg font-black italic">₩{Number(item.lprice).toLocaleString()}</div>
+                    </div>
+                  </a>
+                ))}
               </div>
             </div>
-            
-            <div className="p-4 border-t bg-background flex justify-between items-center">
-              <p className="text-[11px] text-muted-foreground font-medium italic">* 최저가는 배송비가 제외된 금액일 수 있사옵니다.</p>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="px-6 py-2 bg-secondary text-secondary-foreground rounded-lg text-xs font-bold hover:bg-secondary/80 transition-colors uppercase"
-                >
-                닫기
-              </button>
+            <div className="p-4 border-t bg-background flex justify-end">
+              <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 bg-secondary text-secondary-foreground rounded-lg text-xs font-bold hover:bg-secondary/80 transition-colors uppercase">닫기</button>
             </div>
           </div>
         </div>
@@ -764,6 +1092,67 @@ export function SearchBoard() {
         initialData={systemSettings}
         onSuccess={(newData) => setSystemSettings(newData as SystemSettings)}
       />
+
+      {/* Exclude Article Modal */}
+      {isExcludeModalOpen && itemToExclude && (
+        <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-card w-[420px] rounded-2xl shadow-xl border overflow-hidden flex flex-col">
+            <div className="p-5 border-b bg-muted/30">
+              <div className="flex items-center gap-3 text-orange-500 mb-1">
+                <Ban size={20} />
+                <h3 className="font-bold text-lg text-foreground">품번 영구 제외</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">이 품번은 앞으로 검색 결과에 표시되지 않사옵니다.</p>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold mb-1">제외할 품번</p>
+                <div className="text-sm font-bold bg-secondary/20 p-2 rounded-md">{itemToExclude.articleNumber}</div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground font-semibold mb-1 block">제외 사유</label>
+                <textarea 
+                  value={excludeReason}
+                  onChange={(e) => setExcludeReason(e.target.value)}
+                  placeholder="예: 한국 미판매 상품, 마진율 저조 등"
+                  className="w-full text-sm p-3 bg-secondary/10 border border-secondary/30 rounded-lg min-h-[80px] focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                />
+              </div>
+            </div>
+            <div className="p-4 border-t flex justify-end gap-2">
+              <button onClick={() => setIsExcludeModalOpen(false)} className="px-4 py-2 text-sm font-bold text-muted-foreground">취소</button>
+              <button onClick={handleExcludeSubmit} disabled={isExcluding} className="px-6 py-2 bg-orange-600 text-white rounded-lg text-sm font-bold flex items-center gap-2">
+                {isExcluding ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+                영구 제외하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CopyableArticleNumber({ articleNumber }: { articleNumber: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(articleNumber);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="flex items-center gap-1 group/copy">
+      <span className="font-mono text-primary/70">{articleNumber}</span>
+      <button 
+        onClick={handleCopy} 
+        className="p-0.5 text-muted-foreground/30 opacity-0 group-hover/copy:opacity-100 hover:text-primary transition-all rounded hover:bg-primary/10"
+        title="품번 복사"
+      >
+        {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+      </button>
     </div>
   );
 }

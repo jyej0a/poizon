@@ -19,6 +19,11 @@ export function SettingsForm() {
         setAppKey(res.data.poizon_app_key || "");
         setAppSecret(res.data.poizon_app_secret || "");
         setAccessToken((res.data as any).poizon_access_token || "");
+      } else if (!res.success && res.error) {
+        setMessage({ type: "error", text: res.error });
+      } else if (!res.success) {
+        // 기본적으로 로그인이 안 된 경우 success: false, data: null이 반환됨
+        setMessage({ type: "error", text: "로그인이 필요하거나 설정을 불러올 수 없습니다." });
       }
       setIsInitializing(false);
     }

@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/-Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="supabase" />
   </div>
 
-  <h1 align="center">SaaS 템플릿</h1>
+  <h1 align="center">Poizon Bidding</h1>
   <h3 align="center">Next.js 15 + Clerk + Supabase</h3>
 
   <p align="center">
@@ -133,7 +133,7 @@ npm install -g pnpm
 1. [Clerk Dashboard](https://dashboard.clerk.com/)에 접속하여 로그인
 2. **"Create application"** 클릭
 3. 애플리케이션 정보 입력:
-   - **Application name**: 원하는 이름 (예: `SaaS Template`)
+   - **Application name**: 원하는 이름 (예: `Poizon Bidding`)
    - **Sign-in options**: Email, Google 등 원하는 인증 방식 선택
 4. **"Create application"** 클릭
 5. Quick Start 화면에서 **"Continue in Dashboard"** 클릭

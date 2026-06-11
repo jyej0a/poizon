@@ -49,7 +49,11 @@ export async function POST() {
     if (error) {
       console.error("Supabase sync error:", error);
       return NextResponse.json(
-        { error: "Failed to sync user", details: error.message },
+        { 
+          error: "Failed to sync user", 
+          details: error.message,
+          hint: "Check if the 'users' table exists and RLS is configured correctly."
+        },
         { status: 500 }
       );
     }
@@ -58,10 +62,26 @@ export async function POST() {
       success: true,
       user: data,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Sync user error:", error);
+    
+    // 환경 변수 누락 등 초기화 오류 처리
+    if (error.message?.includes("environment variables") || error.message?.includes("missing")) {
+      return NextResponse.json(
+        { 
+          error: "Configuration error", 
+          details: error.message,
+          hint: ".env.local 파일에 필요한 모든 환경 변수가 설정되어 있는지 확인해 주시옵소서."
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Internal server error" },
+      { 
+        error: "Internal server error", 
+        details: error instanceof Error ? error.message : String(error) 
+      },
       { status: 500 }
     );
   }

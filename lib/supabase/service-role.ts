@@ -22,9 +22,13 @@ export function getServiceRoleClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !supabaseServiceRoleKey) {
+  const missingVars = [];
+  if (!supabaseUrl) missingVars.push("NEXT_PUBLIC_SUPABASE_URL");
+  if (!supabaseServiceRoleKey) missingVars.push("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (missingVars.length > 0) {
     throw new Error(
-      "Supabase URL or Service Role Key is missing. Please check your environment variables."
+      `Supabase configuration is missing: ${missingVars.join(", ")}. Please check your .env.local file.`
     );
   }
 

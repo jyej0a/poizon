@@ -92,8 +92,9 @@ export async function getPoizonSettings() {
       .single();
 
     return { success: true, data: config };
-  } catch (error) {
-    return { success: false, data: null };
+  } catch (error: any) {
+    console.error("[getPoizonSettings] Error:", error);
+    return { success: false, data: null, error: error.message };
   }
 }
 

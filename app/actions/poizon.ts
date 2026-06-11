@@ -125,8 +125,11 @@ export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSi
     }
 
     if (!brandId) {
-      return { success: false, error: `'${brandName}' 브랜드의 고유 ID를 찾을 수 없습니다.` };
+      console.warn(`[searchPoizonByBrand] No brand ID found for: ${brandName}`);
+      return { success: false, error: `'${brandName}' 브랜드의 고유 ID를 찾을 수 없습니다. 명칭을 다시 확인해 주시옵소서.` };
     }
+
+    console.log(`[searchPoizonByBrand] Found brand ID: ${brandId} for keyword: ${brandName}`);
 
     // 2단계: 브랜드 ID로 묶음(Batch) 상품 정보 조회 (Paging 적용)
     const spuPayload = {
@@ -141,10 +144,21 @@ export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSi
 
     // 전체 개수(total) 추출 시도
     const total = spuRes?.data?.total || spuRes?.total || 0;
+    
+    console.log(`[searchPoizonByBrand] SPU lookup count: ${total} results for brandId: ${brandId}`);
+
+    if (total === 0) {
+      return { 
+        success: true, 
+        data: spuRes, 
+        total: 0, 
+        message: `'${brandName}' 브랜드로 검색된 상품이 없사옵니다. 지역(KR) 혹은 브랜드 명칭을 다시 확인해 보시옵소서.` 
+      };
+    }
 
     return { success: true, data: spuRes, total };
   } catch (error: any) {
-    console.error("Poizon Brand Search Action Error:", error);
+    console.error("[searchPoizonByBrand] Failure:", error);
     return { success: false, error: error.message };
   }
 }
@@ -152,96 +166,95 @@ export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSi
 /**
  * Poizon API: SPU별 통계 데이터(최근 30일 판매량, 최소 가격 등) 및 하위 SKU 목록 조회
  * (API 제한: 한 번에 최대 5개의 spuId만 요청 가능)
+ * 다중 지역(regions) 조회를 지원하며, 서버 혼잡 방지를 위해 순차적으로 처리함.
  */
-export async function getSpuStatistics(spuIds: (number | string)[], region: string = "KR", language: string = "ko") {
+export async function getSpuStatistics(spuIds: (number | string)[], regions: string[] = ["KR"], language: string = "ko") {
   try {
     const client = await getPoizonClient();
-    
-    // Chunk array by 5 (API Limit), 강제로 숫자로 변환
     const numericSpuIds = spuIds.map(id => Number(id)).filter(id => !isNaN(id));
+    if (numericSpuIds.length === 0) return { success: true, data: [] };
+
     const chunkSize = 5;
-    const chunks = [];
-    for (let i = 0; i < numericSpuIds.length; i += chunkSize) {
-      chunks.push(numericSpuIds.slice(i, i + chunkSize));
-    }
+    const allResultsByRegion: Record<string, any[]> = {};
 
-    const basePayload = {
-      sellerStatusEnable: true,
-      buyStatusEnable: true,
-      region: region,
-      language: language,
-      timeZone: region === "CN" ? "Asia/Shanghai" : "Asia/Seoul",
-      statisticsDataQry: {
-        salesEnable: true,
-        minPriceEnable: true,
-        customCodeEnable: true,
-        bidStatusEnable: true,
-        applySourceEnable: true,
-        channelInfoEnable: true,
-        forFilingEnable: true
-      }
-    };
-
-    const promises = chunks.map(async chunk => {
-      const skuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu", {
-        ...basePayload,
-        spuIds: chunk
-      }).catch(err => {
-        console.error(`Error fetching SKU stats for chunk ${chunk.join(',')}:`, err);
-        return null;
-      });
-
-      const spuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-spu", {
-        ...basePayload,
-        spuIds: chunk
-      }).catch(err => {
-        console.error(`Error fetching SPU stats for chunk ${chunk.join(',')}:`, err);
-        return null;
-      });
-
-      const [skuRes, spuRes] = await Promise.all([skuPromise, spuPromise]);
-      
-      const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
-      const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];
-
-      const mergedMap = new Map();
-
-      // 우선 SKU 데이터를 기반으로 세팅
-      for (const item of skuData) {
-        const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
-        if (id) mergedMap.set(id, { ...item });
+    for (const region of regions) {
+      const chunks = [];
+      for (let i = 0; i < numericSpuIds.length; i += chunkSize) {
+        chunks.push(numericSpuIds.slice(i, i + chunkSize));
       }
 
-      // SPU 통계 데이터 덮어씌우기 (완전한 통계 객체를 spuSaleInfo에 통째로 보존)
-      for (const item of spuData) {
-        const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
-        if (id) {
-          const existing = mergedMap.get(id) || {};
-          mergedMap.set(id, {
-            ...existing,
-            spuSaleInfo: item,
-            commoditySales: item.commoditySales || existing.commoditySales,
-            minPrice: item.minPrice || existing.minPrice,
-            averagePrice: item.averagePrice || existing.averagePrice,
-            authPriceVO: item.authPriceVO || existing.authPriceVO,
-            authPrice: item.authPrice || existing.authPrice
-          });
+      const basePayload = {
+        sellerStatusEnable: true,
+        buyStatusEnable: true,
+        region: region,
+        language: language,
+        timeZone: region === "CN" ? "Asia/Shanghai" : "Asia/Seoul",
+        statisticsDataQry: {
+          salesEnable: true,
+          minPriceEnable: true,
+          customCodeEnable: true,
+          bidStatusEnable: true,
+          applySourceEnable: true,
+          channelInfoEnable: true,
+          forFilingEnable: true
         }
-      }
+      };
 
-      return Array.from(mergedMap.values());
-    });
+      const regionPromises = chunks.map(async (chunk, index) => {
+        // 지역별 첫 번째 청크가 아니라면 부하 방지를 위해 약간의 지연 추가
+        if (index > 0) await new Promise(res => setTimeout(res, 500));
 
-    const results = await Promise.all(promises);
-    
-    // Merge results
-    let mergedData: any[] = [];
-    for (const res of results) {
-      if (!res) continue;
-      mergedData = [...mergedData, ...res];
+        const skuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu", {
+          ...basePayload,
+          spuIds: chunk
+        }).catch(err => {
+          console.error(`[${region}] SKU stats error:`, err);
+          return null;
+        });
+
+        const spuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-spu", {
+          ...basePayload,
+          spuIds: chunk
+        }).catch(err => {
+          console.error(`[${region}] SPU stats error:`, err);
+          return null;
+        });
+
+        const [skuRes, spuRes] = await Promise.all([skuPromise, spuPromise]);
+        
+        const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
+        const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];
+
+        const mergedMap = new Map();
+        for (const item of skuData) {
+          const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
+          if (id) mergedMap.set(id, { ...item });
+        }
+
+        for (const item of spuData) {
+          const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
+          if (id) {
+            const existing = mergedMap.get(id) || {};
+            mergedMap.set(id, {
+              ...existing,
+              spuSaleInfo: item,
+              commoditySales: item.commoditySales || existing.commoditySales,
+              minPrice: item.minPrice || existing.minPrice,
+              averagePrice: item.averagePrice || existing.averagePrice,
+            });
+          }
+        }
+        return Array.from(mergedMap.values());
+      });
+
+      const regionResults = await Promise.all(regionPromises);
+      allResultsByRegion[region] = regionResults.flat().filter(Boolean);
+
+      // 지역 간 요청 시 부하 방지 지연
+      if (regions.length > 1) await new Promise(res => setTimeout(res, 800));
     }
 
-    return { success: true, data: mergedData };
+    return { success: true, data: allResultsByRegion };
   } catch (error: any) {
     console.error("Poizon SPU Statistics Action Error:", error);
     return { success: false, error: error.message };

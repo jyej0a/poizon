@@ -108,6 +108,7 @@ export class PoizonClient {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       },
       body: JSON.stringify(payload),
     });
@@ -118,7 +119,15 @@ export class PoizonClient {
       throw new Error(errorText || response.statusText);
     }
 
-    const json = await response.json();
+    const json = (await response.json()) as any;
+    
+    // Poizon API의 비즈니스 응답 코드 확인 (성공이 아니면 예외 처리)
+    const businessCode = json.code ?? json.status ?? json.status_code;
+    if (businessCode !== undefined && businessCode !== 200 && businessCode !== 0) {
+      const errorMsg = json.msg || json.message || json.error_msg || "Unknown API Error";
+      throw new Error(`Poizon API Error (${businessCode}): ${errorMsg}`);
+    }
+
     return json as T;
   }
 }
