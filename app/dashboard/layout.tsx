@@ -16,7 +16,7 @@ export default function DashboardLayout({
         <header className="md:hidden h-14 border-b flex items-center px-4 bg-card">
           <span className="font-bold text-lg text-primary">POIZON Autosell</span>
         </header>
-        <main className="flex-1 overflow-auto p-1 md:p-2 lg:p-2">
+        <main className="flex-1 overflow-auto p-4 md:p-5 bg-muted/20">
           <div className="mx-auto w-full h-full max-w-[none]">
             {children}
           </div>

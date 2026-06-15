@@ -15,6 +15,26 @@ import { getSkippedItems, addSkippedItems, removeSkippedItems } from "@/app/acti
 import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
 import { MarginSettingsDialog } from "./margin-settings-dialog";
 
+function extractSkuListFromStat(statItem: any): any[] {
+  if (!statItem) return [];
+  if (Array.isArray(statItem)) {
+    return statItem.flatMap((item) => extractSkuListFromStat(item));
+  }
+  const nested = statItem.skuInfoList || statItem.skuSaleInfos;
+  if (Array.isArray(nested) && nested.length > 0) return nested;
+  if (statItem.skuId || statItem.regionSkuId) return [statItem];
+  return [];
+}
+
+function resolveSkuDetails(rawData: any, skuList: any[]): any[] {
+  const fromStats = rawData.skuStats;
+  if (Array.isArray(fromStats) && fromStats.length > 0) {
+    const extracted = fromStats.flatMap((item) => extractSkuListFromStat(item));
+    if (extracted.length > 0) return extracted;
+  }
+  return skuList;
+}
+
 export function SearchBoard() {
   const [keyword, setKeyword] = useState("");
   const [searchType, setSearchType] = useState<"article" | "brand">("article");
@@ -509,12 +529,12 @@ export function SearchBoard() {
             const stCN = statsMapCN.get(sId);
             
             if (stKR) {
-              itemEntry.data.skuStats = stKR.skuSaleInfos || stKR.skuInfoList || [];
+              itemEntry.data.skuStats = extractSkuListFromStat(stKR);
               itemEntry.data.spuStats = stKR.spuSaleInfo || stKR.spuInfo || {};
             }
             if (stCN) {
               itemEntry.data.spuStatsCN = stCN.spuSaleInfo || stCN.spuInfo || {};
-              itemEntry.data.skuStatsCN = stCN.skuSaleInfos || stCN.skuInfoList || [];
+              itemEntry.data.skuStatsCN = extractSkuListFromStat(stCN);
             }
           });
         }
@@ -581,10 +601,10 @@ export function SearchBoard() {
                  const stCN = statsMapCN.get(sId);
                  return { 
                    ...item, 
-                   skuStats: stKR?.skuInfoList || stKR?.skuSaleInfos || [], 
+                   skuStats: extractSkuListFromStat(stKR), 
                    spuStats: stKR?.spuSaleInfo || stKR?.spuInfo || stKR || {},
                    spuStatsCN: stCN?.spuSaleInfo || stCN?.spuInfo || stCN || {},
-                   skuStatsCN: stCN?.skuInfoList || stCN?.skuSaleInfos || []
+                   skuStatsCN: extractSkuListFromStat(stCN)
                  };
               });
             }
@@ -649,8 +669,8 @@ export function SearchBoard() {
     }
 
     // 자식(SKU)들의 판매량을 합산하여 SPU 전체 판매량 정의 (HK 데이터 우선)
-    const skusKR = rawData.skuStats || [];
-    const skusHK = rawData.skuStatsHK || [];
+    const skusKR = resolveSkuDetails(rawData, skuList);
+    const skusHK = rawData.skuStatsHK || rawData.skuStatsCN || [];
     
     // 중국 시장 총 판매량: 홍콩(HK) 글로벌 판매량이 0이면 HK SKU 합산, 그것도 0이면 KR 정보
     const spuSalesHK = rawData.spuStatsHK?.commoditySales || {};
@@ -706,7 +726,9 @@ export function SearchBoard() {
         };
       }),
       skuDetailsHK: skusHK,
+      skuStatsCN: rawData.skuStatsCN || [],
       spuStats: rawData.spuStats || {},
+      spuStatsCN: rawData.spuStatsCN || {},
       spuStatsHK: rawData.spuStatsHK || {},
     });
 
@@ -735,93 +757,94 @@ export function SearchBoard() {
     }
   };
 
+  const isSearchExpanded = isHeaderVisible || isInputFocused;
+  const toolbarBtn =
+    "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors";
+  const toolbarBtnOutline = `${toolbarBtn} border border-border bg-background hover:bg-secondary/60 text-foreground`;
+  const toolbarBtnGhost = `${toolbarBtn} border border-transparent hover:bg-secondary/60 text-muted-foreground`;
+
   return (
-    <div className="h-full flex flex-col gap-2 w-full relative">
-      {/* Search Header - Hover to Expand Area */}
-      <div 
-        className="relative z-30 transition-all duration-500 ease-in-out overflow-hidden"
-        style={{ 
-          maxHeight: (isHeaderVisible || isInputFocused) ? '200px' : '6px',
-          opacity: (isHeaderVisible || isInputFocused) ? 1 : 0.6,
-          marginBottom: (isHeaderVisible || isInputFocused) ? '12px' : '0'
-        }}
-        onMouseEnter={() => setIsHeaderVisible(true)}
-        onMouseLeave={() => setIsHeaderVisible(false)}
-      >
-        <div className={`bg-card border ${isInputFocused ? 'border-primary/50 shadow-lg' : 'border-secondary/40 shadow-md'} rounded-xl p-4 mb-2 transition-all duration-300`}>
-          <div className="flex flex-col md:flex-row gap-3">
-            <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0">
-              <button onClick={() => setSearchType("article")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
-              <button onClick={() => setSearchType("brand")} className={`px-3 py-1.5 text-[13px] font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
-            </div>
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
-              <input 
-                type="text" 
-                value={keyword} 
-                onChange={(e) => setKeyword(e.target.value)} 
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()} 
-                onFocus={() => setIsInputFocused(true)}
-                onBlur={() => setIsInputFocused(false)}
-                placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"} 
-                className="w-full pl-9 pr-4 py-2 bg-secondary/30 border-none rounded-lg outline-none text-[13px] focus:ring-1 focus:ring-primary/20" 
-              />
-            </div>
-            <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0 gap-1 items-center px-2">
-              <span className="text-[10px] font-bold text-muted-foreground/50 uppercase">조회수:</span>
-              <select 
-                value={pageSize} 
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="bg-transparent text-[12px] font-bold outline-none cursor-pointer hover:text-primary transition-colors"
-              >
-                <option value={50}>50개</option>
-                <option value={100}>100개</option>
-                <option value={200}>200개</option>
-              </select>
-            </div>
-            <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors shadow-sm">조회</button>
-          </div>
-        </div>
-        
-        {/* 숨겨졌을 때 나타나는 힌트 라인 - 더욱 고급스럽게 */}
-        {!(isHeaderVisible || isInputFocused) && (
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary/40 to-transparent animate-pulse" />
-        )}
-      </div>
-
-      {/* 감지 영역 */}
-      {!(isHeaderVisible || isInputFocused) && (
-        <div 
-          className="absolute top-0 left-0 right-0 h-4 z-40 cursor-n-resize"
+    <div className="flex-1 flex flex-col min-h-0 w-full">
+      {/* Unified workspace card */}
+      <div className="flex-1 min-h-0 bg-card border border-border/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
+        {/* Search — hover to expand */}
+        <div
+          className="shrink-0 border-b border-border/40"
           onMouseEnter={() => setIsHeaderVisible(true)}
-        />
-      )}
-
-      {/* Workspace Area - Full Width */}
-      <div className="flex-1 bg-card border border-secondary/40 rounded-xl shadow-sm flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b bg-secondary/5">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold tracking-tight">비딩 워크스페이스</h2>
-              <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">
-                {showOnlyProfitable ? flattenedRows.length : items.length} 건
-              </span>
+          onMouseLeave={() => !isInputFocused && setIsHeaderVisible(false)}
+        >
+          {!isSearchExpanded ? (
+            <div
+              className="h-2 cursor-n-resize bg-gradient-to-r from-transparent via-primary/25 to-transparent"
+              onMouseEnter={() => setIsHeaderVisible(true)}
+            />
+          ) : (
+            <div className={`px-4 py-3 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-secondary/[0.03]"}`}>
+              <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+                <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-9">
+                  <button onClick={() => setSearchType("article")} className={`px-3 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
+                  <button onClick={() => setSearchType("brand")} className={`px-3 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
+                </div>
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                  <input
+                    type="text"
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    onFocus={() => setIsInputFocused(true)}
+                    onBlur={() => setIsInputFocused(false)}
+                    placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"}
+                    className="w-full h-9 pl-9 pr-4 bg-background border border-border/60 rounded-lg outline-none text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
+                  />
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex h-9 items-center gap-1.5 rounded-lg border border-border/60 bg-background px-2.5">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">조회수</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
+                    >
+                      <option value={50}>50개</option>
+                      <option value={100}>100개</option>
+                      <option value={200}>200개</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => handleSearch(1)}
+                    disabled={isLoading || !keyword.trim()}
+                    className="h-9 px-5 bg-primary text-primary-foreground rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors"
+                  >
+                    조회
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* Workspace toolbar */}
+        <div className="shrink-0 flex items-center justify-between gap-4 px-4 py-3 border-b border-border/40 bg-muted/30">
+          <div className="flex items-center gap-3 min-w-0">
+            <h2 className="text-sm font-semibold tracking-tight shrink-0">비딩 워크스페이스</h2>
+            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold shrink-0">
+              {showOnlyProfitable ? flattenedRows.length : items.length} 건
+            </span>
             {error && (
-              <div className="flex items-center gap-1.5 text-destructive font-bold text-[11px] animate-pulse">
-                <AlertCircle size={14} />
+              <div className="flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
+                <AlertCircle size={13} className="shrink-0" />
                 {error}
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {/* 카테고리 필터 */}
-            <div className="flex items-center gap-1.5 mr-2 border-r border-secondary/20 pr-3">
-              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-tighter">분류:</span>
-              <select 
-                value={selectedCategory} 
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 pr-2 mr-1 border-r border-border/50">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">분류</span>
+              <select
+                value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="text-[11px] bg-background border border-secondary/30 rounded-lg px-2 py-1.5 font-bold outline-none focus:ring-1 focus:ring-primary/20 transition-all min-w-[80px]"
+                className={`${toolbarBtnOutline} h-8 min-w-[72px] cursor-pointer`}
               >
                 {categories.map(cat => (
                   <option key={cat} value={cat}>{cat}</option>
@@ -829,44 +852,38 @@ export function SearchBoard() {
               </select>
             </div>
 
-            <button 
+            <button
               onClick={() => setShowOnlyProfitable(!showOnlyProfitable)}
-              className={`text-[11px] px-3 py-1.5 border rounded-lg flex items-center gap-1.5 transition-all font-bold ${
-                showOnlyProfitable 
-                ? "bg-blue-500/10 border-blue-500/50 text-blue-600 shadow-sm" 
-                : "border-secondary hover:bg-secondary text-muted-foreground"
+              className={`${toolbarBtn} border ${
+                showOnlyProfitable
+                  ? "bg-blue-500/10 border-blue-500/40 text-blue-600"
+                  : "border-border bg-background hover:bg-secondary/60 text-muted-foreground"
               }`}
             >
-              <Filter size={14} className={showOnlyProfitable ? "fill-blue-600/10" : ""} />
-              수익 상품만 보기
+              <Filter size={13} className={showOnlyProfitable ? "fill-blue-600/10" : ""} />
+              수익 상품만
             </button>
-            <button 
-              onClick={saveWidths}
-              className="text-[11px] px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5 flex items-center gap-1.5 transition-colors font-bold"
-            >
-              <ArrowLeftRight size={14} /> 열 너비 유지
+            <button onClick={saveWidths} className={`${toolbarBtnOutline} text-primary border-primary/30 hover:bg-primary/5`}>
+              <ArrowLeftRight size={13} /> 열 너비
             </button>
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="text-[11px] px-3 py-1.5 border border-secondary rounded-lg hover:bg-secondary flex items-center gap-1.5 transition-colors font-medium"
-            >
-              <Settings2 size={14} /> 마진 설정
+            <button onClick={() => setIsSettingsOpen(true)} className={toolbarBtnGhost}>
+              <Settings2 size={13} /> 마진
             </button>
-            <button 
-              onClick={handleBatchBid} 
-              disabled={(showOnlyProfitable ? filteredFlattenedRows : filteredItems).length === 0 || Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} 
-              className="text-[11px] px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-30"
+            <button
+              onClick={handleBatchBid}
+              disabled={(showOnlyProfitable ? filteredFlattenedRows : filteredItems).length === 0 || Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding}
+              className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30`}
             >
-              <Gavel size={14} /> 일괄 입찰
+              <Gavel size={13} /> 일괄 입찰
             </button>
           </div>
         </div>
         
         <div className="overflow-x-auto flex-1 custom-scrollbar w-full">
           <table className={`w-full text-[13px] text-left whitespace-nowrap table-fixed border-collapse ${resizing ? 'cursor-col-resize select-none' : ''}`}>
-            <thead className="text-[11px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-bold tracking-wider">
-              <tr className="bg-secondary/5 h-10">
-                <th style={{ width: `${columnWidths.skip}px` }} className="relative group/header px-1 text-center bg-secondary/10 border-r border-secondary/10">
+            <thead className="text-[11px] text-muted-foreground bg-muted/20 sticky top-0 z-20 border-b border-border/40 uppercase font-semibold tracking-wide">
+              <tr className="h-10">
+                <th style={{ width: `${columnWidths.skip}px` }} className="relative group/header px-1 text-center bg-muted/30 border-r border-border/30">
                   <span>SKIP</span>
                   <div onMouseDown={(e) => handleResizeStart(e, 'skip')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
@@ -936,7 +953,7 @@ export function SearchBoard() {
             </thead>
             <tbody className="divide-y divide-secondary/10">
               {(!showOnlyProfitable && filteredItems.length === 0) || (showOnlyProfitable && filteredFlattenedRows.length === 0) ? (
-                <tr><td colSpan={10} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">
+                <tr><td colSpan={10} className="py-16 text-center text-muted-foreground/70 text-sm">
                   {items.length === 0 ? "검색을 시작해 주소서." : "해당 분류나 수익 조건에 맞는 보배가 장부에 없사옵니다."}
                 </td></tr>
               ) : showOnlyProfitable ? (
@@ -1121,8 +1138,13 @@ export function SearchBoard() {
 
                   return (
                     <React.Fragment key={`${item.articleNumber}-${idx}`}>
-                      <tr className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''} ${allSkusSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
-                        <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10">
+                      <tr
+                        className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''} ${allSkusSkipped ? 'opacity-40 grayscale-[0.5]' : ''} ${item.skuDetails?.length > 0 ? 'cursor-pointer' : ''}`}
+                        onClick={() => {
+                          if (item.skuDetails?.length > 0) toggleRow(item.id, item.skuDetails);
+                        }}
+                      >
+                        <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
                           <input 
                             type="checkbox" 
                             checked={allSkusSkipped} 
@@ -1130,17 +1152,15 @@ export function SearchBoard() {
                             className="w-4 h-4 cursor-pointer accent-blue-500 shadow-sm"
                           />
                         </td>
-                        <td className="px-1 text-center border-r border-secondary/10">
+                        <td className="px-1 text-center border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
                           <div className="flex flex-col items-center gap-2 py-1">
                             <input type="checkbox" className="w-3.5 h-3.5 accent-primary cursor-pointer" />
                             
-                            {/* 입찰 이력 아이콘 및 툴팁 */}
                             {bidHistory[String(item.id)] ? (
                               <div className="relative group/bid-history">
                                 <div className="p-1 text-blue-500 bg-blue-500/10 rounded-full cursor-help hover:bg-blue-500/20 transition-colors">
                                   <Clock size={12} strokeWidth={3} />
                                 </div>
-                                {/* 입찰 정보 툴팁 */}
                                 <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 hidden group-hover/bid-history:block z-[60] animate-in fade-in slide-in-from-left-1 duration-200">
                                   <div className="bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded shadow-xl whitespace-nowrap font-bold flex items-center gap-1.5 border border-white/10">
                                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
@@ -1150,18 +1170,24 @@ export function SearchBoard() {
                                 </div>
                               </div>
                             ) : (
-                                <div className="w-4 h-4" /> // 이력이 없을 때 정렬 유지용
-                            )}
-
-                            {item.skuDetails?.length > 0 && (
-                              <button onClick={() => toggleRow(item.id, item.skuDetails)} className="text-muted-foreground/30 hover:text-primary transition-colors p-1">
-                                {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                              </button>
+                              <div className="w-4 h-4" />
                             )}
                           </div>
                         </td>
                         <td className="px-4 border-r border-secondary/10 overflow-hidden">
                           <div className="flex items-center gap-3">
+                            {item.skuDetails?.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); toggleRow(item.id, item.skuDetails); }}
+                                className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border/60 bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
+                                title={isExpanded ? "옵션 접기" : "옵션 펼치기"}
+                              >
+                                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              </button>
+                            ) : (
+                              <div className="w-7 h-7 shrink-0" />
+                            )}
                             <div className="w-10 h-10 shrink-0 bg-white border border-secondary/20 rounded-lg p-1 relative shadow-sm">
                               {item.image ? <img src={item.image} className="w-full h-full object-contain" /> : <ImageIcon size={16} className="opacity-10 mx-auto mt-2" />}
                               <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${isBiddable ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-gray-400'}`} />
@@ -1170,6 +1196,11 @@ export function SearchBoard() {
                               <div className="flex items-center gap-2 overflow-hidden">
                                 <span className="bg-primary/10 text-primary text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 uppercase">{item.brand}</span>
                                 <span className="font-bold text-foreground text-[12px] truncate tracking-tight">{item.title}</span>
+                                {item.skuDetails?.length > 0 && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-semibold shrink-0">
+                                    {item.skuDetails.length}개 옵션
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
                                 <CopyableArticleNumber articleNumber={item.articleNumber} />

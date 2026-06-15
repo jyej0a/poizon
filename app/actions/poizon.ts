@@ -206,7 +206,7 @@ export async function getSpuStatistics(spuIds: (number | string)[], regions: str
 
         const skuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu", {
           ...basePayload,
-          spuIdList: chunk
+          spuIds: chunk
         }).catch(err => {
           console.error(`[${region}] SKU stats error:`, err);
           return null;
@@ -214,7 +214,7 @@ export async function getSpuStatistics(spuIds: (number | string)[], regions: str
 
         const spuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-spu", {
           ...basePayload,
-          spuIdList: chunk
+          spuIds: chunk
         }).catch(err => {
           console.error(`[${region}] SPU stats error:`, err);
           return null;
@@ -225,24 +225,63 @@ export async function getSpuStatistics(spuIds: (number | string)[], regions: str
         const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
         const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];
 
-        const mergedMap = new Map();
+        const mergedMap = new Map<number, { spuId: number; skuSaleInfos: any[]; [key: string]: any }>();
+
+        const getSpuId = (item: any): number | null => {
+          const id = item?.spuId || item?.spuSaleInfo?.spuId || item?.spuInfo?.spuId || item?.goodsId;
+          const num = Number(id);
+          return id != null && !isNaN(num) ? num : null;
+        };
+
+        const getSkuId = (item: any): string | null => {
+          const id = item?.skuId || item?.regionSkuId;
+          return id != null ? String(id) : null;
+        };
+
+        const appendSku = (group: { skuSaleInfos: any[] }, skuItem: any) => {
+          const skuId = getSkuId(skuItem);
+          if (!skuId) return;
+          if (!group.skuSaleInfos.some((s) => getSkuId(s) === skuId)) {
+            group.skuSaleInfos.push(skuItem);
+          }
+        };
+
         for (const item of skuData) {
-          const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
-          if (id) mergedMap.set(id, { ...item });
+          const id = getSpuId(item);
+          if (!id) continue;
+
+          const existing = mergedMap.get(id) || { spuId: id, skuSaleInfos: [] };
+          const nested = item.skuInfoList || item.skuSaleInfos;
+          if (Array.isArray(nested)) {
+            nested.forEach((sku) => appendSku(existing, sku));
+          } else if (getSkuId(item)) {
+            appendSku(existing, item);
+          }
+
+          mergedMap.set(id, {
+            ...existing,
+            ...item,
+            skuSaleInfos: existing.skuSaleInfos,
+            skuInfoList: existing.skuSaleInfos,
+          });
         }
 
         for (const item of spuData) {
-          const id = item.spuId || item.spuSaleInfo?.spuId || item.spuInfo?.spuId;
-          if (id) {
-            const existing = mergedMap.get(id) || {};
-            mergedMap.set(id, {
-              ...existing,
-              spuSaleInfo: item,
-              commoditySales: item.commoditySales || existing.commoditySales,
-              minPrice: item.minPrice || existing.minPrice,
-              averagePrice: item.averagePrice || existing.averagePrice,
-            });
-          }
+          const id = getSpuId(item);
+          if (!id) continue;
+
+          const existing = mergedMap.get(id) || { spuId: id, skuSaleInfos: [] };
+          mergedMap.set(id, {
+            ...existing,
+            spuSaleInfo: item,
+            spuInfo: item.spuInfo || existing.spuInfo,
+            commoditySales: item.commoditySales || existing.commoditySales,
+            minPrice: item.minPrice || existing.minPrice,
+            averagePrice: item.averagePrice || existing.averagePrice,
+            marketPrice: item.marketPrice || existing.marketPrice,
+            skuSaleInfos: existing.skuSaleInfos,
+            skuInfoList: existing.skuSaleInfos,
+          });
         }
         return Array.from(mergedMap.values());
       });
