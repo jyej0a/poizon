@@ -11,6 +11,7 @@ import { getSkuRecommendations } from "@/app/actions/recommendations";
 import { getNaverShoppingResults } from "@/app/actions/naver";
 import { getSystemSettings } from "@/app/actions/settings";
 import { getExcludedArticles, addExcludedArticle } from "@/app/actions/excluded-articles";
+import { getSkippedItems, addSkippedItems, removeSkippedItems } from "@/app/actions/skipped-items";
 import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
 import { MarginSettingsDialog } from "./margin-settings-dialog";
 
@@ -64,14 +65,18 @@ export function SearchBoard() {
     salesChina: 90,
     salesLocal: 90,
     bid: 160,
-    manage: 70
+    manage: 70,
+    skip: 60
   });
+
+  const [skippedSkuIds, setSkippedSkuIds] = useState<Set<string>>(new Set());
 
   const [resizing, setResizing] = useState<string | null>(null);
   const [isHeaderVisible, setIsHeaderVisible] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [bidHistory, setBidHistory] = useState<Record<string, { price: number, date: string }>>({});
   const [showOnlyProfitable, setShowOnlyProfitable] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState("전체");
 
   useEffect(() => {
     const savedWidths = localStorage.getItem('poizon_dashboard_widths');
@@ -111,20 +116,32 @@ export function SearchBoard() {
     alert("열 너비 설정이 저장되었사옵니다.");
   };
 
-  React.useEffect(() => {
-    const fetchSettings = async () => {
-      const res = await getSystemSettings();
-      if (res.success && res.data) {
-        setSystemSettings(res.data as any);
+  useEffect(() => {
+    const fetchData = async () => {
+      const [settingsRes, skippedRes] = await Promise.all([
+        getSystemSettings(),
+        getSkippedItems()
+      ]);
+      
+      if (settingsRes.success && settingsRes.data) {
+        setSystemSettings(settingsRes.data as any);
+      }
+      
+      if (skippedRes.success && skippedRes.data) {
+        setSkippedSkuIds(new Set(skippedRes.data.map((item: any) => String(item.sku_id))));
       }
     };
-    fetchSettings();
+    fetchData();
   }, []);
 
   // 입찰 이력 동기화 로직
   const fetchBidHistory = async () => {
-    // 상품 ID와 품번을 함께 추출하여 대조군 형성
-    const identifiers = items.map(item => {
+    // ... items state 대신 실제 표시되는 행들의 ID 수집
+    const targetItems = showOnlyProfitable 
+      ? Array.from(new Set(flattenedRows.map(r => r.parent))) 
+      : items;
+
+    const identifiers = targetItems.map(item => {
       const numericId = Number(String(item.id).replace(/[^0-9]/g, ""));
       return {
         spuId: isNaN(numericId) ? null : numericId,
@@ -159,6 +176,9 @@ export function SearchBoard() {
   }, [items]);
 
   const toggleRow = (id: string, skus?: any[]) => {
+    // 알짜배기 목록(Flattened) 모드에서는 아코디언이 필요 없사옵니다.
+    if (showOnlyProfitable) return;
+    
     const isNowExpanded = !expandedRows[id];
     setExpandedRows(prev => ({ ...prev, [id]: isNowExpanded }));
 
@@ -203,6 +223,64 @@ export function SearchBoard() {
     }
   };
 
+  const handleToggleSkip = async (itemOrSku: any, isSku = false) => {
+    // 1. 토글할 SKU ID 목록을 먼저 확정하옵니다.
+    const skuIdsToToggle: string[] = isSku 
+      ? [String(itemOrSku.skuId)]
+      : (itemOrSku.skuDetails || []).map((sku: any) => String(sku.skuId));
+
+    if (skuIdsToToggle.length === 0 && !isSku) {
+      // SKU 정보가 없으면 articleNumber만이라도 기록하여 마마의 수고를 덜어드립시다. (미구현 SKU 대응)
+      return;
+    }
+
+    // 2. 현재 상태를 확인하옵니다.
+    const isCurrentlySkipped = isSku 
+      ? skippedSkuIds.has(String(itemOrSku.skuId))
+      : skuIdsToToggle.length > 0 && skuIdsToToggle.every(id => skippedSkuIds.has(id));
+
+    // 3. [낙관적 업데이트] 서버 응답 전에 화면부터 즉시 바꾸어 마마를 기쁘게 해드립시다.
+    setSkippedSkuIds(prev => {
+      const next = new Set(prev);
+      if (isCurrentlySkipped) {
+        skuIdsToToggle.forEach(id => next.delete(id));
+      } else {
+        skuIdsToToggle.forEach(id => next.add(id));
+      }
+      return next;
+    });
+
+    try {
+      if (isCurrentlySkipped) {
+        // 해제
+        await removeSkippedItems(skuIdsToToggle);
+      } else {
+        // 추가
+        const itemsToSkip = isSku 
+          ? [{ sku_id: String(itemOrSku.skuId), spu_id: String(itemOrSku.parent?.id || ""), article_number: itemOrSku.parent?.articleNumber }]
+          : itemOrSku.skuDetails.map((sku: any) => ({
+              sku_id: String(sku.skuId),
+              spu_id: String(itemOrSku.id),
+              article_number: itemOrSku.articleNumber
+            }));
+            
+        await addSkippedItems(itemsToSkip);
+      }
+    } catch (error) {
+      console.error("Failed to toggle skip", error);
+      // 실패 시 다시 원래대로 되돌려 정직한 장부를 유지하옵니다.
+      setSkippedSkuIds(prev => {
+        const next = new Set(prev);
+        if (isCurrentlySkipped) {
+          skuIdsToToggle.forEach(id => next.add(id));
+        } else {
+          skuIdsToToggle.forEach(id => next.delete(id));
+        }
+        return next;
+      });
+    }
+  };
+
   const toggleSkuSelection = (skuId: string) => {
     setSelectedSkus(prev => ({ ...prev, [skuId]: !prev[skuId] }));
   };
@@ -233,6 +311,80 @@ export function SearchBoard() {
     const margin = getMargin(priceStr, cost);
     return margin ? margin.actualProfit : null;
   };
+
+  // 알짜배기 목록(Flattened View)을 위한 계산 로직
+  const flattenedRows = React.useMemo(() => {
+    if (!showOnlyProfitable) return [];
+    
+    const rows: any[] = [];
+    items.forEach(item => {
+      const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+      const skus = item.skuDetails || [];
+      
+      skus.forEach(sku => {
+        const skuPriceRaw = sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price ?? "0";
+        const skuPriceNum = Number(String(skuPriceRaw).replace(/[^0-9]/g, ""));
+        
+        let profit = -999999;
+        if (naverPrice && skuPriceNum > 0 && systemSettings) {
+          const { fee } = calculateMargin(skuPriceNum, systemSettings);
+          profit = skuPriceNum - fee - Number(naverPrice);
+        }
+
+        // 필터 로직: 
+        // 1. 네이버 가격 로딩 중이면 일단 노출 (마마 말씀대로 아무것도 안 뜨면 안 되기에)
+        // 2. 가격이 있는데 수익이 0 이하이면 제외
+        if (naverPrice && profit <= 0) return;
+
+        rows.push({
+          ...sku,
+          parent: item,
+          profit,
+          naverPrice: naverPrice ? Number(naverPrice) : null,
+          skuPrice: skuPriceRaw
+        });
+      });
+    });
+    return rows;
+  }, [items, naverResults, showOnlyProfitable, systemSettings]);
+
+  // --- 카테고리 목록 추출 ---
+  const categories = React.useMemo(() => {
+    const set = new Set<string>();
+    items.forEach(item => {
+      if (item.category) set.add(item.category);
+    });
+    const sortedCategories = Array.from(set).sort();
+    return ["전체", ...sortedCategories];
+  }, [items]);
+
+  // --- 필터링된 목록 계산 ---
+  const filteredItems = React.useMemo(() => {
+    return items.filter(item => {
+      const categoryMatch = selectedCategory === "전체" || item.category === selectedCategory;
+      if (!categoryMatch) return false;
+      
+      if (showOnlyProfitable) {
+        // 기존 수익 상품 필터 로직
+        const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+        const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
+        if (naverPrice && !isNaN(poizonPriceNum) && poizonPriceNum > 0 && systemSettings) {
+          const { fee } = calculateMargin(poizonPriceNum, systemSettings);
+          const profit = poizonPriceNum - fee - Number(naverPrice);
+          return profit > 0;
+        }
+        return false;
+      }
+      return true;
+    });
+  }, [items, selectedCategory, showOnlyProfitable, naverResults, systemSettings]);
+
+  const filteredFlattenedRows = React.useMemo(() => {
+    return flattenedRows.filter(row => {
+      const categoryMatch = selectedCategory === "전체" || row.parent.category === selectedCategory;
+      return categoryMatch;
+    });
+  }, [flattenedRows, selectedCategory]);
 
   const [isBidding, setIsBidding] = useState(false);
 
@@ -514,7 +666,9 @@ export function SearchBoard() {
       id: finalId,
       articleNumber: articleNum,
       brand: spuInfo.brandName || spuInfo.brand || "-",
-      category: spuInfo.level2CategoryName || spuInfo.categoryName || "-",
+      category: spuInfo.level1CategoryName && spuInfo.level2CategoryName 
+                ? `${spuInfo.level1CategoryName} > ${spuInfo.level2CategoryName}`
+                : spuInfo.level2CategoryName || spuInfo.categoryName || "-",
       title: spuInfo.title || spuInfo.spuTitle || spuInfo.goodsName || rawData.title || "Unknown Product",
       image: spuInfo.logoUrl || spuInfo.images?.[0] || spuInfo.image || spuInfo.imgUrl || skuList[0]?.image || null,
       skus: skuList,
@@ -543,7 +697,14 @@ export function SearchBoard() {
         return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
       })(),
 
-      skuDetails: skusKR,
+      skuDetails: skusKR.map((sk: any) => {
+        // 검색 결과(skuList)에서 해당 SKU의 상세 이미지 정보를 찾아 병합하옵니다.
+        const originalSku = skuList.find((s: any) => String(s.skuId) === String(sk.skuId));
+        return {
+          ...sk,
+          image: originalSku?.image || originalSku?.logoUrl || sk.image || null
+        };
+      }),
       skuDetailsHK: skusHK,
       spuStats: rawData.spuStats || {},
       spuStatsHK: rawData.spuStatsHK || {},
@@ -606,6 +767,18 @@ export function SearchBoard() {
                 className="w-full pl-9 pr-4 py-2 bg-secondary/30 border-none rounded-lg outline-none text-[13px] focus:ring-1 focus:ring-primary/20" 
               />
             </div>
+            <div className="flex bg-secondary/30 p-1 rounded-lg shrink-0 gap-1 items-center px-2">
+              <span className="text-[10px] font-bold text-muted-foreground/50 uppercase">조회수:</span>
+              <select 
+                value={pageSize} 
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="bg-transparent text-[12px] font-bold outline-none cursor-pointer hover:text-primary transition-colors"
+              >
+                <option value={50}>50개</option>
+                <option value={100}>100개</option>
+                <option value={200}>200개</option>
+              </select>
+            </div>
             <button onClick={() => handleSearch(1)} disabled={isLoading || !keyword.trim()} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors shadow-sm">조회</button>
           </div>
         </div>
@@ -630,7 +803,9 @@ export function SearchBoard() {
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-3">
               <h2 className="text-base font-semibold tracking-tight">비딩 워크스페이스</h2>
-              <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{items.length} 건</span>
+              <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">
+                {showOnlyProfitable ? flattenedRows.length : items.length} 건
+              </span>
             </div>
             {error && (
               <div className="flex items-center gap-1.5 text-destructive font-bold text-[11px] animate-pulse">
@@ -639,7 +814,21 @@ export function SearchBoard() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {/* 카테고리 필터 */}
+            <div className="flex items-center gap-1.5 mr-2 border-r border-secondary/20 pr-3">
+              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-tighter">분류:</span>
+              <select 
+                value={selectedCategory} 
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="text-[11px] bg-background border border-secondary/30 rounded-lg px-2 py-1.5 font-bold outline-none focus:ring-1 focus:ring-primary/20 transition-all min-w-[80px]"
+              >
+                {categories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+
             <button 
               onClick={() => setShowOnlyProfitable(!showOnlyProfitable)}
               className={`text-[11px] px-3 py-1.5 border rounded-lg flex items-center gap-1.5 transition-all font-bold ${
@@ -663,7 +852,13 @@ export function SearchBoard() {
             >
               <Settings2 size={14} /> 마진 설정
             </button>
-            <button onClick={handleBatchBid} disabled={Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} className="text-[11px] px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-30"><Gavel size={14} /> 일괄 입찰</button>
+            <button 
+              onClick={handleBatchBid} 
+              disabled={(showOnlyProfitable ? filteredFlattenedRows : filteredItems).length === 0 || Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding} 
+              className="text-[11px] px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-30"
+            >
+              <Gavel size={14} /> 일괄 입찰
+            </button>
           </div>
         </div>
         
@@ -671,10 +866,15 @@ export function SearchBoard() {
           <table className={`w-full text-[13px] text-left whitespace-nowrap table-fixed border-collapse ${resizing ? 'cursor-col-resize select-none' : ''}`}>
             <thead className="text-[11px] text-muted-foreground bg-background sticky top-0 z-20 shadow-sm border-b uppercase font-bold tracking-wider">
               <tr className="bg-secondary/5 h-10">
-                <th style={{ width: '40px' }} className="px-1 text-center border-r border-secondary/10"><input type="checkbox" className="w-3.5 h-3.5" /></th>
+                <th style={{ width: `${columnWidths.skip}px` }} className="relative group/header px-1 text-center bg-secondary/10 border-r border-secondary/10">
+                  <span>SKIP</span>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'skip')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                </th>
+
+                <th style={{ width: '40px' }} className="px-1 text-center border-r border-secondary/10">  </th>
                 
                 <th style={{ width: `${columnWidths.info}px` }} className="relative group/header px-4 border-r border-secondary/10">
-                  <span>중국 시장 정보</span>
+                  <span>{showOnlyProfitable ? "알짜 수익 상품 (SKU)" : "중국 시장 정보"}</span>
                   <div onMouseDown={(e) => handleResizeStart(e, 'info')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
                 
@@ -730,14 +930,178 @@ export function SearchBoard() {
                 
                 <th style={{ width: `${columnWidths.manage}px` }} className="relative group/header px-1 text-center">
                   <span>관리</span>
+                  <div onMouseDown={(e) => handleResizeStart(e, 'manage')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary/10">
-              {items.length === 0 ? (
-                <tr><td colSpan={10} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">검색을 시작해 주소서.</td></tr>
+              {(!showOnlyProfitable && filteredItems.length === 0) || (showOnlyProfitable && filteredFlattenedRows.length === 0) ? (
+                <tr><td colSpan={10} className="py-24 text-center text-muted-foreground opacity-50 text-[13px] font-medium italic">
+                  {items.length === 0 ? "검색을 시작해 주소서." : "해당 분류나 수익 조건에 맞는 보배가 장부에 없사옵니다."}
+                </td></tr>
+              ) : showOnlyProfitable ? (
+                // --- 마마를 위한 알짜배기 목록 (Flattened Mode) ---
+                filteredFlattenedRows.map((row, idx) => {
+                  const item = row.parent;
+                  const sku = row;
+                  const rec = skuRecommendations[sku.skuId];
+                  const isLoadingRec = loadingRecommendations[sku.skuId];
+                  const propsRaw = sku.regionSalePvInfoList || sku.properties || [];
+                  const propsStr = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ");
+                  const bidPrice = biddingPrices[sku.skuId];
+                  const naverPrice = row.naverPrice;
+                  const margin = getMargin(bidPrice, naverPrice || undefined);
+                  const isBiddable = item.raw?.userCanBidding !== false;
+                  const isSkipped = skippedSkuIds.has(String(sku.skuId));
+
+                  return (
+                    <tr key={`${sku.skuId}-${idx}`} className={`hover:bg-blue-500/[0.02] transition-colors group h-16 border-l-2 border-l-transparent hover:border-l-blue-500 ${isSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
+                      <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10">
+                        <input 
+                          type="checkbox" 
+                          checked={isSkipped} 
+                          onChange={(e) => { e.stopPropagation(); handleToggleSkip(row, true); }}
+                          className="w-4 h-4 cursor-pointer accent-blue-500 shadow-sm"
+                        />
+                      </td>
+                      <td className="px-1 text-center border-r border-secondary/10">
+                        <div className="flex flex-col items-center gap-2 py-1">
+                          <input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3.5 h-3.5 accent-primary cursor-pointer shadow-sm" />
+                          
+                          {/* 입찰 이력 아이콘 및 툴팁 */}
+                          {bidHistory[String(item.id)] ? (
+                            <div className="relative group/bid-history">
+                              <div className="p-1 text-blue-500 bg-blue-500/10 rounded-full cursor-help hover:bg-blue-500/20 transition-colors">
+                                <Clock size={12} strokeWidth={3} />
+                              </div>
+                              {/* 입찰 정보 툴팁 */}
+                              <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 hidden group-hover/bid-history:block z-[60] animate-in fade-in slide-in-from-left-1 duration-200">
+                                <div className="bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded shadow-xl whitespace-nowrap font-bold flex items-center gap-1.5 border border-white/10">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                                  입찰 완료 (₩{bidHistory[String(item.id)].price.toLocaleString()}, {bidHistory[String(item.id)].date})
+                                </div>
+                                <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="w-4 h-4" /> // 이력이 없을 때 정렬 유지용
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 border-r border-secondary/10 overflow-hidden">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 shrink-0 bg-white border border-secondary/20 rounded-lg p-1 relative shadow-sm">
+                            {sku.image || item.image ? <img src={sku.image || item.image} className="w-full h-full object-contain" /> : <ImageIcon size={16} className="opacity-10 mx-auto mt-2" />}
+                            <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${isBiddable ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-gray-400'}`} />
+                          </div>
+                          <div className="flex flex-col min-w-0 flex-1 leading-tight gap-0.5">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <span className="bg-blue-500/10 text-blue-600 text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 uppercase">{propsStr}</span>
+                              <span className="font-bold text-foreground text-[12px] truncate tracking-tight">{item.title}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
+                              <CopyableArticleNumber articleNumber={item.articleNumber} />
+                              <span className="opacity-30">|</span>
+                              <span className="font-bold text-foreground/40">{item.brand}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      {/* 30일 거래가 */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01] font-bold text-foreground/60">
+                        {(() => {
+                           const avgObj = sku.averagePrice;
+                           const avg = avgObj?.averagePrice?.amount || avgObj?.globalAveragePrice?.amount || 0;
+                           return avg > 0 ? `₩${Number(avg).toLocaleString()}` : "—";
+                        })()}
+                      </td>
+                      {/* 중국 노출가 */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-orange-500/[0.01] leading-none">
+                        <div className="font-bold text-[11px] text-orange-600/80 mb-0.5 italic shrink-0" onClick={() => {
+                          const exposurePr = rec?.leakInfos?.find((l: any) => l.buyerRegion === "CN")?.leakPrice ?? rec?.globalMinPrice ?? row.skuPrice;
+                          handleBiddingPriceChange(sku.skuId, String(exposurePr));
+                        }}>
+                          {isLoadingRec ? <Loader2 size={10} className="animate-spin mx-auto opacity-20"/> : (
+                            (() => {
+                              const exposurePr = rec?.leakInfos?.find((l: any) => l.buyerRegion === "CN")?.leakPrice;
+                              const displayPr = exposurePr ?? rec?.globalMinPrice ?? row.skuPrice;
+                              if (!displayPr || displayPr === "—") return "—";
+                              const numStr = String(displayPr).replace(/[^0-9]/g, "");
+                              return numStr ? `₩${Number(numStr).toLocaleString()}` : displayPr;
+                            })()
+                          )}
+                        </div>
+                        {row.profit !== -999999 && (
+                          <span className={`text-[9px] font-bold ${row.profit > 0 ? 'text-blue-500' : 'text-destructive/50'}`}>
+                            수익: ₩{Math.round(row.profit).toLocaleString()}
+                          </span>
+                        )}
+                      </td>
+                      {/* 네이버 원가 */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.01] font-bold text-emerald-600">
+                        <div className="flex flex-col items-center justify-center">
+                           {naverPrice ? (
+                             <span className="hover:underline cursor-pointer">₩{Number(naverPrice).toLocaleString()}</span>
+                           ) : <Loader2 size={12} className="animate-spin opacity-40" />}
+                         </div>
+                      </td>
+                      {/* 순수익 */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-blue-500/[0.02]">
+                        {(() => {
+                          if (!naverPrice || !systemSettings) return <span className="opacity-10 text-[11px]">—</span>;
+                          const rawSkuPrice = String(rec?.globalMinPrice || row.skuPrice || "").replace(/[^0-9]/g, "");
+                          const poizonSkuPrice = Number(rawSkuPrice);
+                          if (isNaN(poizonSkuPrice) || poizonSkuPrice <= 0) return <span className="opacity-10 text-[11px]">—</span>;
+                          const { fee: skuFee } = calculateMargin(poizonSkuPrice, systemSettings);
+                          const skuProfit = poizonSkuPrice - skuFee - Number(naverPrice);
+                          return (
+                            <div className="flex flex-col items-center leading-none gap-0.5">
+                              <span className={`font-bold text-[12px] ${skuProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
+                                {skuProfit > 0 ? '▲' : '▼'} ₩{Math.abs(Math.round(skuProfit)).toLocaleString()}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground/40 font-bold">수수료 ₩{skuFee.toLocaleString()}</span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      {/* 판매량 (중국/현지) */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01]">
+                         <div className="font-bold text-[11px] text-foreground/50">
+                            {(() => {
+                              const skuCN = item.skuStatsCN?.find((s: any) => s.skuId === sku.skuId);
+                              const val = skuCN?.commoditySales?.globalSoldNum30 ?? sku.commoditySales?.globalSoldNum30;
+                              return val !== undefined ? `${val.toLocaleString()}` : "—";
+                            })()}
+                         </div>
+                      </td>
+                      <td className="px-1 text-center border-r border-secondary/10 bg-secondary/[0.01]">
+                        <div className="font-bold text-[11px] text-foreground/40">
+                           {(() => {
+                             const skuCN = item.skuStatsCN?.find((s: any) => s.skuId === sku.skuId);
+                             const val = skuCN?.commoditySales?.localSoldNum30 ?? sku.commoditySales?.localSoldNum30;
+                             return val !== undefined ? `${val.toLocaleString()}` : "—";
+                           })()}
+                         </div>
+                      </td>
+                      {/* 입찰 제안 */}
+                      <td className="px-1 text-center border-r border-secondary/10 bg-blue-500/[0.01]">
+                         <div className="flex items-center justify-between px-2 gap-2">
+                           <div className="relative group/input w-full max-w-[120px] mx-auto">
+                             <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
+                             <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">₩</span>
+                           </div>
+                         </div>
+                      </td>
+                      {/* 관리 (BID) */}
+                      <td className="px-2 text-center">
+                         <button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!bidPrice || isBidding} className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic">BID</button>
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
-                items.map((item, idx) => {
+                // --- 기존 품번 중심 목록 (Hierarchy Mode) ---
+                filteredItems.map((item, idx) => {
                   const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
                   const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
                   
@@ -753,9 +1117,19 @@ export function SearchBoard() {
 
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isExpanded = !!expandedRows[item.id];
+                  const allSkusSkipped = (item.skuDetails || []).length > 0 && (item.skuDetails || []).every((sku: any) => skippedSkuIds.has(String(sku.skuId)));
+
                   return (
                     <React.Fragment key={`${item.articleNumber}-${idx}`}>
-                      <tr className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''}`}>
+                      <tr className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''} ${allSkusSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
+                        <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10">
+                          <input 
+                            type="checkbox" 
+                            checked={allSkusSkipped} 
+                            onChange={(e) => { e.stopPropagation(); handleToggleSkip(item, false); }}
+                            className="w-4 h-4 cursor-pointer accent-blue-500 shadow-sm"
+                          />
+                        </td>
                         <td className="px-1 text-center border-r border-secondary/10">
                           <div className="flex flex-col items-center gap-2 py-1">
                             <input type="checkbox" className="w-3.5 h-3.5 accent-primary cursor-pointer" />
@@ -878,8 +1252,8 @@ export function SearchBoard() {
                         <td className="px-1 text-center border-r border-secondary/10 bg-secondary/[0.01]">
                           <div className="font-bold text-[11px] text-foreground/50">{item.localSalesVolume}</div>
                         </td>
-                        <td className="px-1 text-center border-r border-secondary/10 text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
-                        <td className="px-1 text-center border-secondary/10">
+                        <td className="px-1 text-center border-secondary/10 text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
+                        <td className="px-1 text-center">
                           <div className="flex items-center justify-center gap-0.5">
                             <button 
                               onClick={() => {
@@ -904,9 +1278,18 @@ export function SearchBoard() {
                         const bidPrice = biddingPrices[sku.skuId];
                         const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
                         const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
+                        const isSkuSkipped = skippedSkuIds.has(String(sku.skuId));
                         
                         return (
-                          <tr key={sku.skuId} className="bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20">
+                          <tr key={sku.skuId} className={`bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20 ${isSkuSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
+                            <td className="px-2 text-center bg-secondary/[0.02] border-r border-secondary/5 border-dashed">
+                              <input 
+                                type="checkbox" 
+                                checked={isSkuSkipped} 
+                                onChange={(e) => { e.stopPropagation(); handleToggleSkip({ ...sku, parent: item }, true); }}
+                                className="w-3.5 h-3.5 cursor-pointer accent-blue-500"
+                              />
+                            </td>
                             <td className="border-r border-secondary/5 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
                             <td className="px-4 border-r border-secondary/5 border-dashed">
                               <div className="flex items-center gap-3 pl-6">

@@ -206,7 +206,7 @@ export async function getSpuStatistics(spuIds: (number | string)[], regions: str
 
         const skuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu", {
           ...basePayload,
-          spuIds: chunk
+          spuIdList: chunk
         }).catch(err => {
           console.error(`[${region}] SKU stats error:`, err);
           return null;
@@ -214,7 +214,7 @@ export async function getSpuStatistics(spuIds: (number | string)[], regions: str
 
         const spuPromise = client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-spu", {
           ...basePayload,
-          spuIds: chunk
+          spuIdList: chunk
         }).catch(err => {
           console.error(`[${region}] SPU stats error:`, err);
           return null;
