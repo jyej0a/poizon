@@ -20,10 +20,21 @@ export const POIZON_CONSTANTS = {
     DEFAULT_SIZE_TYPE: "EU",
   },
   
+  // API 비즈니스 에러 코드
+  ERROR_CODES: {
+    /** 동일 SKU/옵션에 활성 입찰이 이미 존재 */
+    DUPLICATE_LISTING: 91800500,
+  },
+
   // 엔드포인트 모음
   ENDPOINTS: {
     // 상품 조회
     SEARCH_BY_ARTICLE: "/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-article-number",
+    SKU_BY_SPU: "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu",
+    SKU_BY_SPU_IDS: "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu-ids",
+    SKU_BY_GLOBAL_SPU: "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-global-spu",
+    SPU_BY_SPU: "/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-spu",
+    /** @deprecated use SKU_BY_SPU_IDS */
     SPU_STATISTICS: "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-spu-ids",
     
     // 입찰 실행 (Normal Bidding - 80000014 에러 해결책)

@@ -4,6 +4,11 @@ import { getPoizonClient } from "@/app/actions/poizon";
 import { auth } from "@clerk/nextjs/server";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
+import {
+  extractListingRawList,
+  parseListingItem,
+  type ParsedListingItem,
+} from "@/lib/utils/poizon-listing";
 
 export interface ListingFilters {
   status?: string;      // active | sold | cancelled | expired
@@ -12,24 +17,7 @@ export interface ListingFilters {
   pageSize?: number;
 }
 
-export interface ListingItem {
-  sellerBiddingNo: string;
-  skuId: number;
-  spuId: number;
-  articleNumber: string;
-  productName: string;
-  brandName: string;
-  categoryName: string;
-  sizeInfo: string;
-  image: string;
-  price: number;
-  quantity: number;
-  status: string;
-  bidFailCount: number;
-  cnMarketInfo: string;
-  krMarketInfo: string;
-  createdAt: string;
-}
+export interface ListingItem extends ParsedListingItem {}
 
 /**
  * 포이즌 API에서 내 입찰/리스팅 목록을 조회합니다.
@@ -57,34 +45,9 @@ export async function getMyListings(filters: ListingFilters = {}) {
       payload
     );
 
-    // API 응답 구조 파싱 (다양한 응답 포맷 대응)
-    const rawList = response?.data?.contents 
-      || response?.data?.list 
-      || response?.contents 
-      || response?.list 
-      || [];
-    
+    const rawList = extractListingRawList(response);
     const total = response?.data?.total || response?.total || rawList.length;
-
-    // 데이터 정규화
-    const items: ListingItem[] = rawList.map((item: any) => ({
-      sellerBiddingNo: item.sellerBiddingNo || item.biddingNo || item.id || "",
-      skuId: item.skuId || 0,
-      spuId: item.spuId || 0,
-      articleNumber: item.articleNumber || item.styleId || "",
-      productName: item.productName || item.title || item.spuName || "",
-      brandName: item.brandName || item.brand || "",
-      categoryName: item.categoryName || item.category || "",
-      sizeInfo: item.sizeInfo || item.size || item.properties?.map((p: any) => p.value).join(" / ") || "",
-      image: item.image || item.logoUrl || item.imgUrl || "",
-      price: item.price || item.bidPrice || item.amount || 0,
-      quantity: item.quantity || item.qty || 1,
-      status: item.status || item.bidStatus || "active",
-      bidFailCount: item.bidFailCount || item.failCount || 0,
-      cnMarketInfo: item.cnMarketInfo || item.chinaMarket || "-",
-      krMarketInfo: item.krMarketInfo || item.koreaMarket || "-",
-      createdAt: item.createdAt || item.createTime || item.gmtCreate || "",
-    }));
+    const items: ListingItem[] = rawList.map(parseListingItem);
 
     return { success: true, data: items, total, raw: response };
   } catch (error: any) {
@@ -140,9 +103,7 @@ export async function updateBidPrice(
 
     // 2. 새 가격으로 재입찰
     const { executeBidding } = await import("@/app/actions/bidding");
-    const bidResult = await executeBidding([
-      { skuId, spuId, price: newPrice }
-    ]);
+    const bidResult = await executeBidding([{ skuId, spuId, price: newPrice }]);
 
     return bidResult;
   } catch (error: any) {

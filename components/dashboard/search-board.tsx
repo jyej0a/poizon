@@ -2,18 +2,31 @@
 
 import React, { useState, useEffect } from "react";
 import { 
-  Search, Loader2, Gavel, ExternalLink, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, ArrowLeftRight, X,
-  Trash2, Ban, ChevronLeft, ChevronsLeft, ChevronsRight, Copy, Check, Clock, Filter
+  Search, Loader2, Gavel, ExternalLink, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, RotateCcw, X,
+  Trash2, Ban, Copy, Check, Clock, Filter, ArrowUp, ArrowDown, ChevronsUpDown,
+  Plus, StickyNote, Flag, Save, EyeOff, Eye
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
-import { executeBidding, getBidHistoryBySpuIds, type BidPayload } from "@/app/actions/bidding";
+import { formatSalesVolume, getSkuSalesValue } from "@/lib/utils/sales-volume";
+import { executeBidding, getExistingBidsForSkus, getBidHistoryBySkuIds, type BidPayload, type ExistingBidInfo, type ExecuteBiddingMode } from "@/app/actions/bidding";
 import { getSkuRecommendations } from "@/app/actions/recommendations";
 import { getNaverShoppingResults } from "@/app/actions/naver";
 import { getSystemSettings } from "@/app/actions/settings";
 import { getExcludedArticles, addExcludedArticle } from "@/app/actions/excluded-articles";
 import { getSkippedItems, addSkippedItems, removeSkippedItems } from "@/app/actions/skipped-items";
+import { getItemStatuses, setItemHandled, setItemMemo, type ItemStatus } from "@/app/actions/item-status";
+import { getSkuStatuses, getSkuStatusesBySpuIds, setSkuMemo, setSkuManualBidMarked, setSkuStockMarked, setSkuHandled, setManySkuHandled } from "@/app/actions/sku-status";
+import { formatActivityLine, getSkuLastActivity, getSpuLastActivity, type SkuActivity } from "@/lib/utils/sku-activity";
+import { getSkuRowVisualState, getSpuRowVisualState } from "@/lib/utils/sku-row-visual";
+import { EMPTY_SKU_STATUS, type SkuStatus } from "@/types/sku-status";
 import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
+import { formatBidDate } from "@/lib/utils/poizon-listing";
 import { MarginSettingsDialog } from "./margin-settings-dialog";
+import { BidStatusIndicator, SpuBidSummary, type BidDisplaySource, type BidStatusInfo } from "./bid-status-indicator";
+import { SkuRowManageCell } from "./sku-row-manage-cell";
+import { StockStatusIndicator } from "./stock-status-indicator";
+import { ReviewCheckButton, type ReviewCheckState } from "./review-check-button";
 
 function extractSkuListFromStat(statItem: any): any[] {
   if (!statItem) return [];
@@ -28,16 +41,192 @@ function extractSkuListFromStat(statItem: any): any[] {
 
 function resolveSkuDetails(rawData: any, skuList: any[]): any[] {
   const fromStats = rawData.skuStats;
-  if (Array.isArray(fromStats) && fromStats.length > 0) {
-    const extracted = fromStats.flatMap((item) => extractSkuListFromStat(item));
-    if (extracted.length > 0) return extracted;
+  const extracted =
+    Array.isArray(fromStats) && fromStats.length > 0
+      ? fromStats.flatMap((item) => extractSkuListFromStat(item))
+      : [];
+
+  if (extracted.length === 0) return skuList;
+  if (!Array.isArray(skuList) || skuList.length === 0) return extracted;
+
+  const byId = new Map<string, any>();
+  const put = (sku: any) => {
+    const id = String(sku.skuId ?? sku.dwSkuId ?? "");
+    if (!id) return;
+    const prev = byId.get(id);
+    byId.set(id, prev
+      ? {
+          ...prev,
+          ...sku,
+          commoditySales: sku.commoditySales ?? prev.commoditySales,
+          image: sku.image || prev.image,
+          logoUrl: sku.logoUrl || prev.logoUrl,
+        }
+      : sku);
+  };
+
+  skuList.forEach(put);
+  extracted.forEach(put);
+  return Array.from(byId.values());
+}
+
+function buildStatsMaps(
+  statsResKR: { success?: boolean; data?: Record<string, any[]> | any[] },
+  statsResCN: { success?: boolean; data?: Record<string, any[]> | any[] }
+) {
+  const statsMapKR = new Map<number, any>();
+  const statsMapCN = new Map<number, any>();
+
+  if (statsResKR.success && statsResKR.data && !Array.isArray(statsResKR.data) && statsResKR.data.KR) {
+    for (const st of statsResKR.data.KR) {
+      const id = Number(st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId);
+      if (id) statsMapKR.set(id, st);
+    }
   }
-  return skuList;
+  if (statsResCN.success && statsResCN.data && !Array.isArray(statsResCN.data) && statsResCN.data.CN) {
+    for (const st of statsResCN.data.CN) {
+      const id = Number(st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId);
+      if (id) statsMapCN.set(id, st);
+    }
+  }
+  return { statsMapKR, statsMapCN };
+}
+
+function applyStatsToItemData(
+  itemData: any,
+  statsMapKR: Map<number, any>,
+  statsMapCN: Map<number, any>
+) {
+  const sId = Number(itemData.spuInfo?.spuId || itemData.spuId || itemData.goodsId);
+  const stKR = statsMapKR.get(sId);
+  const stCN = statsMapCN.get(sId);
+  if (stKR) {
+    itemData.skuStats = extractSkuListFromStat(stKR);
+    itemData.spuStats = stKR.spuSaleInfo || stKR.spuInfo || {};
+  }
+  if (stCN) {
+    itemData.skuStatsCN = extractSkuListFromStat(stCN);
+    itemData.spuStatsCN = stCN.spuSaleInfo || stCN.spuInfo || {};
+  }
+}
+
+const DEFAULT_COLUMN_WIDTHS: { [key: string]: number } = {
+  info: 340,
+  avg: 100,
+  naver: 110,
+  exposure: 120,
+  profit: 100,
+  salesChina: 90,
+  salesLocal: 90,
+  bid: 200,
+  manage: 156,
+  skip: 60,
+};
+
+const COLUMN_STORAGE_KEY = "poizon_dashboard_widths_v4";
+const BRAND_PROGRESS_KEY = "poizon_brand_progress";
+
+interface BrandProgress {
+  page: number;
+  brandId: number | string | null;
+  total: number;
+}
+
+function readBrandProgress(): Record<string, BrandProgress> {
+  try {
+    const raw = localStorage.getItem(BRAND_PROGRESS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveBrandProgress(brand: string, progress: BrandProgress) {
+  try {
+    const all = readBrandProgress();
+    all[brand.trim().toLowerCase()] = progress;
+    localStorage.setItem(BRAND_PROGRESS_KEY, JSON.stringify(all));
+  } catch (e) {
+    console.error("Failed to persist brand progress", e);
+  }
+}
+
+function getBrandProgress(brand: string): BrandProgress | null {
+  const all = readBrandProgress();
+  return all[brand.trim().toLowerCase()] ?? null;
+}
+
+// --- 최근 검색 기록 (localStorage, 서버 부하 0) ---
+const SEARCH_HISTORY_KEY = "poizon_search_history";
+const SEARCH_HISTORY_LIMIT = 10;
+
+interface SearchHistoryEntry {
+  keyword: string;
+  type: "article" | "brand";
+  ts: number;
+}
+
+function readSearchHistory(): SearchHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((e: any) => e && typeof e.keyword === "string" && (e.type === "article" || e.type === "brand"))
+      .sort((a: SearchHistoryEntry, b: SearchHistoryEntry) => b.ts - a.ts);
+  } catch {
+    return [];
+  }
+}
+
+function writeSearchHistory(entries: SearchHistoryEntry[]) {
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(entries));
+  } catch (e) {
+    console.error("Failed to persist search history", e);
+  }
+}
+
+function addSearchHistory(keyword: string, type: "article" | "brand"): SearchHistoryEntry[] {
+  const trimmed = keyword.trim();
+  if (!trimmed) return readSearchHistory();
+  const key = trimmed.toLowerCase();
+  // 동일 검색어 + 타입 조합은 중복 제거 후 최상단으로 이동
+  const others = readSearchHistory().filter(
+    (e) => !(e.keyword.trim().toLowerCase() === key && e.type === type)
+  );
+  const next = [{ keyword: trimmed, type, ts: Date.now() }, ...others].slice(0, SEARCH_HISTORY_LIMIT);
+  writeSearchHistory(next);
+  return next;
+}
+
+function removeSearchHistory(keyword: string, type: "article" | "brand"): SearchHistoryEntry[] {
+  const key = keyword.trim().toLowerCase();
+  const next = readSearchHistory().filter(
+    (e) => !(e.keyword.trim().toLowerCase() === key && e.type === type)
+  );
+  writeSearchHistory(next);
+  return next;
+}
+
+function clearSearchHistory(): SearchHistoryEntry[] {
+  writeSearchHistory([]);
+  return [];
+}
+
+// 정렬 가능한 숫자형 컬럼의 값 추출기
+type SortKey = "avg" | "exposure" | "naver" | "profit" | "salesChina" | "salesLocal";
+
+function parseNumber(value: any): number {
+  if (value === null || value === undefined) return NaN;
+  const num = Number(String(value).replace(/[^0-9.-]/g, ""));
+  return isNaN(num) ? NaN : num;
 }
 
 export function SearchBoard() {
   const [keyword, setKeyword] = useState("");
   const [searchType, setSearchType] = useState<"article" | "brand">("article");
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +239,9 @@ export function SearchBoard() {
   // 추천 입찰가 데이터용 State
   const [skuRecommendations, setSkuRecommendations] = useState<Record<string, any>>({});
   const [loadingRecommendations, setLoadingRecommendations] = useState<Record<string, boolean>>({});
+  // 진행 중인 세부 옵션(SKU) 추천가 수집을 즉시 취소하기 위한 레지스트리.
+  // (서버 액션 자체는 끝까지 실행되더라도, 취소된 SKU의 응답은 무시하고 로딩 표시를 즉시 해제한다.)
+  const cancelledRecsRef = React.useRef<Set<string>>(new Set());
 
   const [pageSize, setPageSize] = useState(50);
   const [lastBrandKeyword, setLastBrandKeyword] = useState("");
@@ -76,53 +268,132 @@ export function SearchBoard() {
   const [isExcluding, setIsExcluding] = useState(false);
 
   // 열 너비 조절 기능
-  const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({
-    info: 340,
-    avg: 100,
-    naver: 110,
-    exposure: 120,
-    profit: 100,
-    salesChina: 90,
-    salesLocal: 90,
-    bid: 160,
-    manage: 70,
-    skip: 60
-  });
+  const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({ ...DEFAULT_COLUMN_WIDTHS });
+
+  // 정렬 상태 (숫자형 컬럼 클릭 정렬)
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+
+  // 비차단 인라인 피드백 (alert 대체)
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = setTimeout(() => setFeedback(null), 2200);
+  };
 
   const [skippedSkuIds, setSkippedSkuIds] = useState<Set<string>>(new Set());
+  const [skippedAtBySku, setSkippedAtBySku] = useState<Record<string, string>>({});
 
   const [resizing, setResizing] = useState<string | null>(null);
-  const [isHeaderVisible, setIsHeaderVisible] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
-  const [bidHistory, setBidHistory] = useState<Record<string, { price: number, date: string }>>({});
+  const [bidHistoryBySku, setBidHistoryBySku] = useState<Record<string, BidStatusInfo>>({});
   const [showOnlyProfitable, setShowOnlyProfitable] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("전체");
 
+  interface DuplicateBidConflict {
+    payload: BidPayload;
+    existing: ExistingBidInfo;
+    sizeInfo?: string;
+  }
+  const [duplicateBidModal, setDuplicateBidModal] = useState<{
+    conflicts: DuplicateBidConflict[];
+  } | null>(null);
+
+  // 품번(SPU) 처리 상태/메모 (영구 저장)
+  const [itemStatuses, setItemStatuses] = useState<Record<string, ItemStatus>>({});
+  const [showOnlyUnprocessed, setShowOnlyUnprocessed] = useState(false);
+  const [memoEditor, setMemoEditor] = useState<{ spuId: string; value: string } | null>(null);
+  const [skuStatuses, setSkuStatuses] = useState<Record<string, SkuStatus>>({});
+  const [skuMemoEditor, setSkuMemoEditor] = useState<{ skuId: string; spuId?: string; value: string } | null>(null);
+  const [savingSkuMemo, setSavingSkuMemo] = useState<Record<string, boolean>>({});
+  const [savingManualBid, setSavingManualBid] = useState<Record<string, boolean>>({});
+  const savingManualBidRef = React.useRef<Record<string, boolean>>({});
+  const manualBidSaveSeqRef = React.useRef<Record<string, number>>({});
+  const [savingStockMarked, setSavingStockMarked] = useState<Record<string, boolean>>({});
+  const savingStockMarkedRef = React.useRef<Record<string, boolean>>({});
+  const stockMarkedSaveSeqRef = React.useRef<Record<string, number>>({});
+
+  React.useEffect(() => {
+    savingManualBidRef.current = savingManualBid;
+  }, [savingManualBid]);
+
+  React.useEffect(() => {
+    savingStockMarkedRef.current = savingStockMarked;
+  }, [savingStockMarked]);
+
+  const mergeSkuStatusFromServer = React.useCallback(
+    (prev: Record<string, SkuStatus>, serverData: Record<string, SkuStatus>) => {
+      const merged = { ...prev };
+      for (const [id, status] of Object.entries(serverData)) {
+        if (savingManualBidRef.current[id] || savingStockMarkedRef.current[id]) continue;
+        merged[id] = status;
+      }
+      return merged;
+    },
+    []
+  );
+
+  const defaultSkuStatus = (prev?: SkuStatus): SkuStatus => ({
+    ...EMPTY_SKU_STATUS,
+    ...prev,
+  });
+
+  // 브랜드 '더 불러오기' (누적 탐색) 관련 State
+  const [cachedBrandId, setCachedBrandId] = useState<number | string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [brandHint, setBrandHint] = useState<BrandProgress | null>(null);
+
+  // 브랜드명 입력 시, 이전 탐색 진행 위치 안내
   useEffect(() => {
-    const savedWidths = localStorage.getItem('poizon_dashboard_widths');
+    if (searchType !== "brand" || !keyword.trim()) {
+      setBrandHint(null);
+      return;
+    }
+    setBrandHint(getBrandProgress(keyword));
+  }, [keyword, searchType]);
+
+  useEffect(() => {
+    const savedWidths = localStorage.getItem(COLUMN_STORAGE_KEY);
     if (savedWidths) {
       try {
-        setColumnWidths(JSON.parse(savedWidths));
+        setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS, ...JSON.parse(savedWidths) });
       } catch (e) {
         console.error("Failed to parse saved widths", e);
       }
     }
+    setSearchHistory(readSearchHistory());
   }, []);
+
+  const persistWidths = (widths: { [key: string]: number }) => {
+    try {
+      localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(widths));
+    } catch (e) {
+      console.error("Failed to persist widths", e);
+    }
+  };
 
   const handleResizeStart = (e: React.MouseEvent, column: string) => {
     e.preventDefault();
+    e.stopPropagation();
     setResizing(column);
     
     const startX = e.pageX;
     const startWidth = columnWidths[column];
+    let finalWidths = columnWidths;
     
+    const minWidth = column === "manage" ? 150 : 60;
     const handleMouseMove = (updateEvent: MouseEvent) => {
-      const newWidth = Math.max(60, startWidth + (updateEvent.pageX - startX));
-      setColumnWidths(prev => ({ ...prev, [column]: newWidth }));
+      const newWidth = Math.max(minWidth, startWidth + (updateEvent.pageX - startX));
+      setColumnWidths(prev => {
+        finalWidths = { ...prev, [column]: newWidth };
+        return finalWidths;
+      });
     };
     
     const handleMouseUp = () => {
       setResizing(null);
+      persistWidths(finalWidths); // 드래그 종료 시 자동 저장
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -131,9 +402,92 @@ export function SearchBoard() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const saveWidths = () => {
-    localStorage.setItem('poizon_dashboard_widths', JSON.stringify(columnWidths));
-    alert("열 너비 설정이 저장되었사옵니다.");
+  // 헤더 더블클릭 시 해당 컬럼 기본 너비로 복원
+  const resetColumnWidth = (column: string) => {
+    if (DEFAULT_COLUMN_WIDTHS[column] === undefined) return;
+    setColumnWidths(prev => {
+      const next = { ...prev, [column]: DEFAULT_COLUMN_WIDTHS[column] };
+      persistWidths(next);
+      return next;
+    });
+  };
+
+  // 모든 컬럼 너비 초기화
+  const resetAllWidths = () => {
+    const next = { ...DEFAULT_COLUMN_WIDTHS };
+    setColumnWidths(next);
+    persistWidths(next);
+    showFeedback("열 너비를 기본값으로 초기화했습니다.");
+  };
+
+  // 정렬 토글 (오름차순 → 내림차순 → 해제)
+  const toggleSort = (key: SortKey) => {
+    setSortConfig(prev => {
+      if (!prev || prev.key !== key) return { key, dir: "desc" };
+      if (prev.dir === "desc") return { key, dir: "asc" };
+      return null;
+    });
+  };
+
+  const getSortValue = (key: SortKey, source: { item: any; sku?: any; naverPrice?: any; profit?: number }): number => {
+    const { item, sku, naverPrice, profit } = source;
+    switch (key) {
+      case "avg": {
+        if (sku) {
+          const avgObj = sku.averagePrice;
+          return parseNumber(avgObj?.averagePrice?.amount || avgObj?.globalAveragePrice?.amount || 0);
+        }
+        return parseNumber(item.avgPrice);
+      }
+      case "exposure": {
+        if (sku) return parseNumber(sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price);
+        return parseNumber(item.minPrice);
+      }
+      case "naver": {
+        const np = naverPrice ?? naverResults[item.articleNumber]?.[0]?.lprice;
+        return parseNumber(np);
+      }
+      case "profit": {
+        if (profit !== undefined) return profit;
+        const np = naverResults[item.articleNumber]?.[0]?.lprice;
+        const poizonPriceNum = parseNumber(item.minPrice);
+        if (np && poizonPriceNum > 0 && systemSettings) {
+          const { fee } = calculateMargin(poizonPriceNum, systemSettings);
+          return poizonPriceNum - fee - Number(np);
+        }
+        return -Infinity;
+      }
+      case "salesChina": {
+        if (sku) {
+          return parseNumber(getSkuSalesValue(sku, item.skuStatsCN, "globalSoldNum30") ?? 0);
+        }
+        return parseNumber(item.salesVolume);
+      }
+      case "salesLocal": {
+        if (sku) {
+          return parseNumber(getSkuSalesValue(sku, item.skuStatsCN, "localSoldNum30") ?? 0);
+        }
+        return parseNumber(item.localSalesVolume);
+      }
+      default:
+        return NaN;
+    }
+  };
+
+  const applySort = <T,>(rows: T[], getValue: (row: T) => number): T[] => {
+    if (!sortConfig) return rows;
+    const dir = sortConfig.dir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av = getValue(a);
+      const bv = getValue(b);
+      const aValid = !isNaN(av) && isFinite(av);
+      const bValid = !isNaN(bv) && isFinite(bv);
+      // 값이 없는 행은 항상 뒤로 보냄
+      if (!aValid && !bValid) return 0;
+      if (!aValid) return 1;
+      if (!bValid) return -1;
+      return (av - bv) * dir;
+    });
   };
 
   useEffect(() => {
@@ -142,58 +496,54 @@ export function SearchBoard() {
         getSystemSettings(),
         getSkippedItems()
       ]);
-      
+
       if (settingsRes.success && settingsRes.data) {
         setSystemSettings(settingsRes.data as any);
       }
-      
+
       if (skippedRes.success && skippedRes.data) {
         setSkippedSkuIds(new Set(skippedRes.data.map((item: any) => String(item.sku_id))));
+        const atMap: Record<string, string> = {};
+        skippedRes.data.forEach((item: any) => {
+          if (item.skipped_at) atMap[String(item.sku_id)] = item.skipped_at;
+        });
+        setSkippedAtBySku(atMap);
       }
     };
     fetchData();
   }, []);
 
-  // 입찰 이력 동기화 로직
-  const fetchBidHistory = async () => {
-    // ... items state 대신 실제 표시되는 행들의 ID 수집
-    const targetItems = showOnlyProfitable 
-      ? Array.from(new Set(flattenedRows.map(r => r.parent))) 
-      : items;
+  // 입찰 이력 동기화 (SKU 단위) — collectVisibleSkuIds / fetchBidHistory는 flattenedRows 정의 이후에 선언
 
-    const identifiers = targetItems.map(item => {
-      const numericId = Number(String(item.id).replace(/[^0-9]/g, ""));
-      return {
-        spuId: isNaN(numericId) ? null : numericId,
-        articleNumber: item.articleNumber
-      };
-    }).filter(id => id.spuId !== null || id.articleNumber);
+  // 품번(SPU) 처리 상태/메모 + 옵션(SKU) 검토·메모·입찰표기 동기화
+  const fetchAllItemAndSkuStatuses = React.useCallback(async (itemList: typeof items) => {
+    const spuIds = itemList
+      .map((item) => String(item.id).replace(/[^0-9]/g, ""))
+      .filter(Boolean);
+    if (spuIds.length === 0) return;
 
-    if (identifiers.length === 0) return;
+    const [itemRes, skuRes] = await Promise.all([
+      getItemStatuses(spuIds),
+      getSkuStatusesBySpuIds(spuIds),
+    ]);
 
-    const spuIds = identifiers.map(id => id.spuId).filter((id): id is number => id !== null);
-    const res = await getBidHistoryBySpuIds(spuIds);
-    
-    if (res.success && res.data) {
-      const historyMap: Record<string, { price: number, date: string }> = {};
-      res.data.forEach((entry: any) => {
-        const sId = String(entry.spu_id);
-        if (!historyMap[sId]) {
-          historyMap[sId] = {
-            price: entry.bid_price,
-            date: new Date(entry.created_at).toLocaleDateString('ko-KR', { month: '6', day: 'numeric' }).replace('.', '월').replace('.', '일')
-          };
-        }
-      });
-      setBidHistory(historyMap);
+    if (itemRes.success && itemRes.data) {
+      setItemStatuses((prev) => ({ ...prev, ...itemRes.data }));
+    } else if (!itemRes.success) {
+      showFeedback(`품번 상태 불러오기 실패: ${itemRes.error ?? "item_status 확인"}`);
     }
-  };
+    if (skuRes.success && skuRes.data) {
+      setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, skuRes.data!));
+    } else if (!skuRes.success) {
+      showFeedback(`옵션 상태 불러오기 실패: ${skuRes.error ?? "sku_status 확인"}`);
+    }
+  }, [mergeSkuStatusFromServer]);
 
   useEffect(() => {
     if (items.length > 0) {
-      fetchBidHistory();
+      void fetchAllItemAndSkuStatuses(items);
     }
-  }, [items]);
+  }, [items, fetchAllItemAndSkuStatuses]);
 
   const toggleRow = (id: string, skus?: any[]) => {
     // 알짜배기 목록(Flattened) 모드에서는 아코디언이 필요 없사옵니다.
@@ -229,17 +579,40 @@ export function SearchBoard() {
     });
   }, [skuRecommendations]);
 
+  // 지정한 SKU들의 진행 중 추천가 수집을 즉시 중단(취소)한다.
+  const cancelRecommendations = (skuIds: (string | number)[]) => {
+    const keys = skuIds.map((id) => String(id)).filter(Boolean);
+    if (keys.length === 0) return;
+    keys.forEach((key) => cancelledRecsRef.current.add(key));
+    setLoadingRecommendations((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => {
+        delete next[key];
+      });
+      return next;
+    });
+  };
+
   const fetchRecommendation = async (skuId: string | number) => {
-    setLoadingRecommendations(prev => ({ ...prev, [skuId]: true }));
+    const key = String(skuId);
+    // 새로 시작하는 수집은 취소 목록에서 해제한다(재펼침 시 정상 수집).
+    cancelledRecsRef.current.delete(key);
+    setLoadingRecommendations(prev => ({ ...prev, [key]: true }));
     try {
       const res = await getSkuRecommendations(skuId);
+      // 수집 도중 처리완료 등으로 취소되었다면 결과를 반영하지 않는다.
+      if (cancelledRecsRef.current.has(key)) return;
       if (res.success && res.data) {
-        setSkuRecommendations(prev => ({ ...prev, [skuId]: res.data }));
+        setSkuRecommendations(prev => ({ ...prev, [key]: res.data }));
       }
     } catch (e) {
       console.error("Failed to fetch recommendation", e);
     } finally {
-      setLoadingRecommendations(prev => ({ ...prev, [skuId]: false }));
+      setLoadingRecommendations(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     }
   };
 
@@ -266,6 +639,16 @@ export function SearchBoard() {
         skuIdsToToggle.forEach(id => next.delete(id));
       } else {
         skuIdsToToggle.forEach(id => next.add(id));
+      }
+      return next;
+    });
+    setSkippedAtBySku(prev => {
+      const next = { ...prev };
+      const now = new Date().toISOString();
+      if (isCurrentlySkipped) {
+        skuIdsToToggle.forEach(id => delete next[id]);
+      } else {
+        skuIdsToToggle.forEach(id => { next[id] = now; });
       }
       return next;
     });
@@ -379,11 +762,72 @@ export function SearchBoard() {
   }, [items]);
 
   // --- 필터링된 목록 계산 ---
+  // 품번이 검토완료(SPU 또는 전 SKU)인지 판정 — 입찰만으로는 미처리 필터에서 숨기지 않음
+  const isItemProcessed = React.useCallback((item: any) => {
+    const spuId = String(item.id).replace(/[^0-9]/g, "");
+    const childSkuIds = (item.skuDetails || []).map((sku: any) => String(sku.skuId));
+    const allSkusReviewed =
+      childSkuIds.length > 0 && childSkuIds.every((skuId: string) => !!skuStatuses[skuId]?.handled);
+    return !!(itemStatuses[spuId]?.handled || allSkusReviewed);
+  }, [itemStatuses, skuStatuses]);
+
+  const getSpuReviewSummary = React.useCallback((item: any) => {
+    const childSkuIds = (item.skuDetails || []).map((sku: any) => String(sku.skuId));
+    const spuKey = String(item.id).replace(/[^0-9]/g, "");
+    const spuFlagHandled = itemStatuses[spuKey]?.handled ?? false;
+    const handledCount = childSkuIds.filter((id: string) => skuStatuses[id]?.handled).length;
+    const totalCount = childSkuIds.length;
+    const allHandled = spuFlagHandled || (totalCount > 0 && handledCount === totalCount);
+    const someHandled = !allHandled && handledCount > 0;
+    const reviewState: ReviewCheckState = allHandled ? "all" : someHandled ? "partial" : "none";
+    return { childSkuIds, spuKey, handledCount, totalCount, allHandled, someHandled, reviewState };
+  }, [itemStatuses, skuStatuses]);
+
+  const getSkuBidViews = React.useCallback((skuId: string, skuStatus?: SkuStatus) => {
+    const systemBid = bidHistoryBySku[skuId] ?? null;
+    const manualMarked = skuStatus?.manualBidMarked ?? false;
+    const manualBid: BidStatusInfo | null = manualMarked
+      ? {
+          source: "manual" as BidDisplaySource,
+          date: skuStatus?.manualBidDate || formatBidDate(new Date().toISOString()),
+        }
+      : null;
+    return { systemBid, manualBid, manualMarked, hasAnyBid: !!systemBid || manualMarked };
+  }, [bidHistoryBySku]);
+
+  const getSpuBidSummary = React.useCallback((item: any) => {
+    const childSkuIds = (item.skuDetails || []).map((sku: any) => String(sku.skuId));
+    let systemCount = 0;
+    let manualCount = 0;
+    const bids: Array<{ sizeInfo?: string; price?: number; date: string; source: BidDisplaySource }> = [];
+
+    childSkuIds.forEach((skuId: string) => {
+      const sku = (item.skuDetails || []).find((s: any) => String(s.skuId) === skuId);
+      const status = skuStatuses[skuId];
+      const { systemBid, manualBid } = getSkuBidViews(skuId, status);
+      const propsRaw = sku?.regionSalePvInfoList || sku?.properties || [];
+      const sizeInfo = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || systemBid?.sizeInfo;
+
+      if (systemBid) {
+        systemCount++;
+        bids.push({ sizeInfo, price: systemBid.price, date: systemBid.date, source: "system" });
+      } else if (status?.manualBidMarked) {
+        manualCount++;
+        bids.push({ sizeInfo, date: manualBid?.date ?? formatBidDate(new Date().toISOString()), source: "manual" });
+      }
+    });
+
+    return { bidCount: systemCount + manualCount, systemCount, manualCount, totalCount: childSkuIds.length, bids };
+  }, [bidHistoryBySku, skuStatuses, getSkuBidViews]);
+
   const filteredItems = React.useMemo(() => {
     return items.filter(item => {
       const categoryMatch = selectedCategory === "전체" || item.category === selectedCategory;
       if (!categoryMatch) return false;
-      
+
+      // '미처리 상품만 보기': 검토완료된 품번만 숨김
+      if (showOnlyUnprocessed && isItemProcessed(item)) return false;
+
       if (showOnlyProfitable) {
         // 기존 수익 상품 필터 로직
         const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
@@ -397,16 +841,268 @@ export function SearchBoard() {
       }
       return true;
     });
-  }, [items, selectedCategory, showOnlyProfitable, naverResults, systemSettings]);
+  }, [items, selectedCategory, showOnlyProfitable, showOnlyUnprocessed, isItemProcessed, naverResults, systemSettings]);
 
   const filteredFlattenedRows = React.useMemo(() => {
     return flattenedRows.filter(row => {
       const categoryMatch = selectedCategory === "전체" || row.parent.category === selectedCategory;
-      return categoryMatch;
+      if (!categoryMatch) return false;
+      if (showOnlyUnprocessed && isItemProcessed(row.parent)) return false;
+      return true;
     });
-  }, [flattenedRows, selectedCategory]);
+  }, [flattenedRows, selectedCategory, showOnlyUnprocessed, isItemProcessed]);
+
+  // --- 정렬 적용 (요청: 사용자 중심 정렬) ---
+  const sortedItems = React.useMemo(() => {
+    if (!sortConfig) return filteredItems;
+    return applySort(filteredItems, (item) => getSortValue(sortConfig.key, { item }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredItems, sortConfig, naverResults, systemSettings]);
+
+  const sortedFlattenedRows = React.useMemo(() => {
+    if (!sortConfig) return filteredFlattenedRows;
+    return applySort(filteredFlattenedRows, (row) =>
+      getSortValue(sortConfig.key, { item: row.parent, sku: row, naverPrice: row.naverPrice, profit: row.profit })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredFlattenedRows, sortConfig, naverResults, systemSettings]);
+
+  // --- 전체 선택(select-all)용 현재 화면의 SKU ID 목록 ---
+  const visibleSkuIds = React.useMemo(() => {
+    if (showOnlyProfitable) {
+      return sortedFlattenedRows.map((row) => String(row.skuId)).filter(Boolean);
+    }
+    return sortedItems.flatMap((item) =>
+      (item.skuDetails || []).map((sku: any) => String(sku.skuId))
+    ).filter(Boolean);
+  }, [showOnlyProfitable, sortedFlattenedRows, sortedItems]);
+
+  const selectedVisibleCount = visibleSkuIds.filter((id) => selectedSkus[id]).length;
+  const allVisibleSelected = visibleSkuIds.length > 0 && selectedVisibleCount === visibleSkuIds.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+
+  const fetchBidHistory = React.useCallback(async () => {
+    const skuIds = visibleSkuIds.map(Number).filter((id) => !isNaN(id) && id > 0);
+    if (skuIds.length === 0) return;
+
+    const res = await getBidHistoryBySkuIds(skuIds);
+    if (res.success && res.data) {
+      const historyMap: Record<string, BidStatusInfo> = {};
+      res.data.forEach((entry: any) => {
+        const key = String(entry.sku_id);
+        if (!historyMap[key]) {
+          historyMap[key] = {
+            price: entry.bid_price,
+            date: formatBidDate(entry.created_at),
+            createdAt: entry.created_at,
+            sizeInfo: entry.size_info || undefined,
+            source: "system",
+          };
+        }
+      });
+      setBidHistoryBySku((prev) => ({ ...prev, ...historyMap }));
+    }
+  }, [visibleSkuIds]);
+
+  const fetchSkuStatuses = React.useCallback(async () => {
+    const skuIds = visibleSkuIds.map(Number).filter((id) => !isNaN(id) && id > 0);
+    if (skuIds.length === 0) return;
+
+    const res = await getSkuStatuses(skuIds);
+    if (res.success && res.data) {
+      setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, res.data!));
+    }
+  }, [visibleSkuIds, mergeSkuStatusFromServer]);
+
+  useEffect(() => {
+    if (visibleSkuIds.length > 0) {
+      fetchBidHistory();
+      fetchSkuStatuses();
+    }
+  }, [visibleSkuIds.join(","), fetchBidHistory, fetchSkuStatuses]);
+
+  const buildBidMemoLine = (price: number, date: string) =>
+    `입찰완료 ₩${Number(price).toLocaleString()} (${date})`;
+
+  const applyBidSuccessToState = (payloads: BidPayload[]) => {
+    const today = formatBidDate(new Date().toISOString());
+    const now = new Date().toISOString();
+
+    setBidHistoryBySku((prev) => {
+      const next = { ...prev };
+      payloads.forEach((p) => {
+        const key = String(p.skuId);
+        next[key] = {
+          price: Number(p.price),
+          date: today,
+          createdAt: now,
+          sizeInfo: p.sizeInfo || resolveSkuSizeInfo(p.skuId),
+          source: "system",
+        };
+      });
+      return next;
+    });
+
+    setSkuStatuses((prev) => {
+      const next = { ...prev };
+      payloads.forEach((p) => {
+        const key = String(p.skuId);
+        const bidLine = buildBidMemoLine(Number(p.price), today);
+        const existingMemo = prev[key]?.memo;
+        const newMemo = existingMemo ? `${existingMemo}\n${bidLine}` : bidLine;
+        next[key] = {
+          ...defaultSkuStatus(prev[key]),
+          handled: true,
+          handledAt: now,
+          handledDate: today,
+          memo: newMemo,
+          updatedAt: now,
+        };
+        void setSkuMemo(p.skuId, newMemo, p.spuId).catch(() => {});
+        void setSkuHandled(p.skuId, true, p.spuId).catch(() => {});
+      });
+      return next;
+    });
+
+    fetchBidHistory();
+  };
+
+  const resolveSkuActivity = React.useCallback(
+    (skuId: string, skuStatus?: SkuStatus): SkuActivity | null =>
+      getSkuLastActivity({
+        skuStatus,
+        bidCreatedAt: bidHistoryBySku[skuId]?.createdAt ?? null,
+        skippedAt: skippedAtBySku[skuId] ?? null,
+      }),
+    [bidHistoryBySku, skippedAtBySku]
+  );
+
+  const setManySelected = (skuIds: string[], value: boolean) => {
+    setSelectedSkus((prev) => {
+      const next = { ...prev };
+      skuIds.forEach((id) => {
+        if (value) next[id] = true;
+        else delete next[id];
+      });
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setManySelected(visibleSkuIds, !allVisibleSelected);
+  };
 
   const [isBidding, setIsBidding] = useState(false);
+
+  const formatBidFeedback = (results: Array<{ success?: boolean; alreadyListed?: boolean; message?: string }>, fallbackError?: string) => {
+    const synced = results.filter((r) => r.success && r.alreadyListed);
+    const created = results.filter((r) => r.success && !r.alreadyListed);
+    const failed = results.filter((r) => !r.success);
+
+    if (created.length > 0 && synced.length > 0) {
+      return `${created.length}건 입찰 성공, ${synced.length}건은 실데이터에 이미 입찰 중(내 사이트 동기화 완료).`;
+    }
+    if (created.length > 0 && failed.length === 0) {
+      return created.length === 1
+        ? (created[0].message || "입찰 요청이 성공적으로 처리되었습니다.")
+        : `${created.length}건의 입찰 요청이 성공적으로 처리되었습니다.`;
+    }
+    if (synced.length > 0 && failed.length === 0) {
+      return synced.length === 1
+        ? synced[0].message || "실데이터에 이미 입찰 중입니다. 내 사이트에 동기화했습니다."
+        : `${synced.length}건은 실데이터에 이미 입찰 중입니다. 내 사이트에 동기화했습니다.`;
+    }
+    if (failed.length > 0) {
+      const firstError = failed[0]?.message || fallbackError;
+      return `${failed.length}건 입찰 실패. 대표 사유: ${firstError}`;
+    }
+    return fallbackError || "입찰 처리 결과를 확인할 수 없습니다.";
+  };
+
+  const runBidding = async (payloads: BidPayload[], mode: ExecuteBiddingMode = "normal") => {
+    const enriched = payloads.map((p) => ({
+      ...p,
+      sellerBiddingNo: p.sellerBiddingNo,
+      sizeInfo: p.sizeInfo || resolveSkuSizeInfo(p.skuId),
+    }));
+    const res = await executeBidding(enriched, { mode });
+    if (res.success) {
+      showFeedback(formatBidFeedback(res.data || [], res.error));
+      applyBidSuccessToState(payloads);
+    } else {
+      showFeedback(formatBidFeedback(res.data || [], res.data?.[0]?.message || res.error));
+      if (res.data?.some((r) => r.success)) applyBidSuccessToState(payloads.filter((p) => res.data?.find((r) => String(r.skuId) === String(p.skuId) && r.success)));
+    }
+    return res;
+  };
+
+  const resolveSkuSizeInfo = (skuId: string | number): string | undefined => {
+    for (const item of items) {
+      const sku = (item.skuDetails || []).find((s: any) => String(s.skuId) === String(skuId));
+      if (sku) {
+        const propsRaw = sku.regionSalePvInfoList || sku.properties || [];
+        return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
+      }
+    }
+    if (showOnlyProfitable) {
+      const row = flattenedRows.find((r: any) => String(r.skuId) === String(skuId));
+      if (row) {
+        const propsRaw = row.regionSalePvInfoList || row.properties || [];
+        return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
+      }
+    }
+    return undefined;
+  };
+
+  const splitPayloadsByExistingBids = async (payloads: BidPayload[]) => {
+    const existingRes = await getExistingBidsForSkus(payloads.map((p) => p.skuId));
+    const conflicts: DuplicateBidConflict[] = [];
+    const nonConflicts: BidPayload[] = [];
+
+    for (const payload of payloads) {
+      const existing = existingRes.data?.[String(payload.skuId)];
+      if (existing) {
+        conflicts.push({
+          payload,
+          existing,
+          sizeInfo: resolveSkuSizeInfo(payload.skuId) || existing.sizeInfo,
+        });
+      } else {
+        nonConflicts.push(payload);
+      }
+    }
+
+    return { conflicts, nonConflicts };
+  };
+
+  const handleDuplicateConfirm = async (action: "forceRetry" | "updatePrice") => {
+    if (!duplicateBidModal) return;
+    const { conflicts } = duplicateBidModal;
+    setDuplicateBidModal(null);
+    setIsBidding(true);
+
+    try {
+      for (const conflict of conflicts) {
+        const { payload, existing } = conflict;
+        const enriched: BidPayload = {
+          ...payload,
+          sellerBiddingNo: existing.sellerBiddingNo,
+          sizeInfo: conflict.sizeInfo || existing.sizeInfo,
+        };
+
+        if (action === "updatePrice") {
+          if (existing.bidPrice === payload.price) continue;
+          await runBidding([enriched], "updatePrice");
+        } else {
+          await runBidding([enriched], "forceRetry");
+        }
+      }
+    } catch (err: any) {
+      showFeedback(`오류: ${err.message}`);
+    } finally {
+      setIsBidding(false);
+    }
+  };
 
   const handleSingleBid = async (skuId: string | number, spuId: string | number) => {
     const priceStr = biddingPrices[String(skuId)];
@@ -415,16 +1111,17 @@ export function SearchBoard() {
     
     setIsBidding(true);
     try {
-      const res = await executeBidding([{ skuId, spuId, price }]);
-      if (res.success) {
-        alert("입찰 요청이 성공적으로 처리되었습니다.");
-        fetchBidHistory();
-      } else {
-        const detailMsg = res.data?.[0]?.message || res.error;
-        alert(`입찰 실패: ${detailMsg}`);
+      const payload: BidPayload = { skuId, spuId, price };
+      const { conflicts, nonConflicts } = await splitPayloadsByExistingBids([payload]);
+
+      if (conflicts.length > 0) {
+        setDuplicateBidModal({ conflicts });
+        return;
       }
+
+      await runBidding(nonConflicts);
     } catch (err: any) {
-      alert(`오류: ${err.message}`);
+      showFeedback(`오류: ${err.message}`);
     } finally {
       setIsBidding(false);
     }
@@ -434,33 +1131,52 @@ export function SearchBoard() {
     const selectedIds = Object.keys(selectedSkus).filter(id => selectedSkus[id]);
     if (selectedIds.length === 0) return;
 
+    // skuId → spuId 매핑 (입찰 이력/처리완료 표시를 위해 spuId 동반)
+    const skuToSpu = new Map<string, string>();
+    items.forEach((item) => {
+      const sId = String(item.id).replace(/[^0-9]/g, "");
+      (item.skuDetails || []).forEach((sku: any) => {
+        if (sku.skuId != null) skuToSpu.set(String(sku.skuId), sId);
+      });
+    });
+
     const payloads: BidPayload[] = [];
     for (const skuId of selectedIds) {
       const priceStr = biddingPrices[skuId];
       if (priceStr && Number(priceStr) > 0) {
-        payloads.push({ skuId, price: Number(priceStr) });
+        const spuId = skuToSpu.get(String(skuId));
+        payloads.push({ skuId, price: Number(priceStr), ...(spuId ? { spuId } : {}) });
       }
     }
 
     if (payloads.length === 0) {
-      alert("선택된 옵션 중 입찰가가 입력된 항목이 없습니다.");
+      showFeedback("선택된 옵션 중 입찰가가 입력된 항목이 없습니다.");
       return;
     }
 
     setIsBidding(true);
     try {
-      const res = await executeBidding(payloads);
-      if (res.success) {
-        alert(`${payloads.length}건의 일괄 입찰 요청이 성공적으로 처리되었습니다.`);
+      const { conflicts, nonConflicts } = await splitPayloadsByExistingBids(payloads);
+
+      if (nonConflicts.length > 0) {
+        await runBidding(nonConflicts);
+        setSelectedSkus((prev) => {
+          const next = { ...prev };
+          nonConflicts.forEach((p) => delete next[String(p.skuId)]);
+          return next;
+        });
+      }
+
+      if (conflicts.length > 0) {
+        setDuplicateBidModal({ conflicts });
+        return;
+      }
+
+      if (nonConflicts.length > 0) {
         setSelectedSkus({});
-        fetchBidHistory();
-      } else {
-        const failedCount = (res.data as any)?.filter?.((r: any) => !r.success)?.length || 0;
-        const firstErrorStr = res.data?.find((r: any) => !r.success)?.message || res.error;
-        alert(`${failedCount}건 입찰 실패. 대표 사유: ${firstErrorStr}`);
       }
     } catch (err: any) {
-      alert(`오류: ${err.message}`);
+      showFeedback(`오류: ${err.message}`);
     } finally {
       setIsBidding(false);
     }
@@ -469,7 +1185,11 @@ export function SearchBoard() {
   const handleSearch = async (page: number = 1) => {
     const searchKeyword = (page === 1) ? keyword.trim() : lastBrandKeyword;
     if (!searchKeyword) return;
-    
+
+    if (page === 1) {
+      setSearchHistory(addSearchHistory(searchKeyword, searchType));
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -499,43 +1219,17 @@ export function SearchBoard() {
           }
         });
 
-        // 2. 통계 정보를 한꺼번에 일괄 요청 (속도 개선 2)
+        // 2. 통계 정보 일괄 요청 (KR + CN: 중국 시장 판매량은 CN 우선, 실패 시 KR 폴백)
         if (spuIdsForStats.length > 0) {
           const [statsResKR, statsResCN] = await Promise.all([
             getSpuStatistics(spuIdsForStats, ["KR"]),
-            getSpuStatistics(spuIdsForStats, ["CN"])
+            getSpuStatistics(spuIdsForStats, ["CN"]),
           ]);
 
-          const statsMapKR = new Map();
-          const statsMapCN = new Map();
+          const { statsMapKR, statsMapCN } = buildStatsMaps(statsResKR, statsResCN);
 
-          if (statsResKR.success && statsResKR.data.KR) {
-            statsResKR.data.KR.forEach((st: any) => {
-              const id = st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId;
-              if (id) statsMapKR.set(Number(id), st);
-            });
-          }
-          if (statsResCN.success && statsResCN.data.CN) {
-            statsResCN.data.CN.forEach((st: any) => {
-              const id = st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId;
-              if (id) statsMapCN.set(Number(id), st);
-            });
-          }
-
-          // 검색된 데이터에 통계 정보 병합
-          validItemDataList.forEach(itemEntry => {
-            const sId = Number(itemEntry.data.spuInfo?.spuId || itemEntry.data.spuId || itemEntry.data.goodsId);
-            const stKR = statsMapKR.get(sId);
-            const stCN = statsMapCN.get(sId);
-            
-            if (stKR) {
-              itemEntry.data.skuStats = extractSkuListFromStat(stKR);
-              itemEntry.data.spuStats = stKR.spuSaleInfo || stKR.spuInfo || {};
-            }
-            if (stCN) {
-              itemEntry.data.spuStatsCN = stCN.spuSaleInfo || stCN.spuInfo || {};
-              itemEntry.data.skuStatsCN = extractSkuListFromStat(stCN);
-            }
+          validItemDataList.forEach((itemEntry) => {
+            applyStatsToItemData(itemEntry.data, statsMapKR, statsMapCN);
           });
         }
 
@@ -549,13 +1243,36 @@ export function SearchBoard() {
         setExcludedArticles(curExcluded);
         const filteredItems = newItems.filter(item => !curExcluded.includes(item.articleNumber));
 
-        if (filteredItems.length > 0) {
-          setItems(prev => [...filteredItems, ...prev]);
+        // 이번 검색 결과 자체의 중복(콤마 입력 중복 등) 제거
+        const itemKey = (it: any) => String(it.id ?? it.articleNumber);
+        const seenInBatch = new Set<string>();
+        const uniqueNewItems = filteredItems.filter((it) => {
+          const key = itemKey(it);
+          if (seenInBatch.has(key)) return false;
+          seenInBatch.add(key);
+          return true;
+        });
+
+        if (uniqueNewItems.length > 0) {
+          // 워크스페이스 누적은 유지하되, 동일 품번/SPU는 최신 결과로 갱신(중복 방지)
+          setItems(prev => {
+            const newKeys = new Set(uniqueNewItems.map(itemKey));
+            const newArticles = new Set(uniqueNewItems.map((it) => it.articleNumber));
+            const remainingPrev = prev.filter(
+              (p) => !newKeys.has(itemKey(p)) && !newArticles.has(p.articleNumber)
+            );
+            return [...uniqueNewItems, ...remainingPrev];
+          });
           setKeyword("");
         }
       } else {
-        const res = await searchPoizonByBrand(searchKeyword, page, pageSize);
+        // 같은 브랜드면 캐시된 brandId를 재사용해 명칭 재해석(2회 호출) 생략 → rate limit 완화
+        const sameBrand = searchKeyword.trim().toLowerCase() === lastBrandKeyword.trim().toLowerCase();
+        const brandIdToUse = (page > 1 || sameBrand) ? cachedBrandId : null;
+        const res = await searchPoizonByBrand(searchKeyword, page, pageSize, brandIdToUse);
         if (res.success && res.data) {
+          if (res.brandId != null) setCachedBrandId(res.brandId);
+
           let results: any[] = [];
           if (Array.isArray(res.data.data?.contents)) results = res.data.data.contents;
           else if (Array.isArray(res.data.contents)) results = res.data.contents;
@@ -563,52 +1280,30 @@ export function SearchBoard() {
           else if (Array.isArray(res.data.list)) results = res.data.list;
           else if (Array.isArray(res.data.data)) results = res.data.data;
           if (results.length === 0) {
-            setError("검색 결과가 없습니다.");
-            if (page === 1) setItems([]);
+            if (page === 1) {
+              setError("검색 결과가 없습니다.");
+              setItems([]);
+            } else {
+              showFeedback("더 이상 불러올 상품이 없습니다.");
+            }
+            setLastBrandKeyword(searchKeyword);
+            saveBrandProgress(searchKeyword, { page, brandId: res.brandId ?? cachedBrandId, total: res.total || totalCount });
           } else {
             const spuIds = results.map((item: any) => item.spuId || item.goodsId).filter(Boolean);
             if (spuIds.length > 0) {
               const [statsResKR, statsResCN] = await Promise.all([
                 getSpuStatistics(spuIds, ["KR"]),
-                getSpuStatistics(spuIds, ["CN"])
+                getSpuStatistics(spuIds, ["CN"]),
               ]);
-              
-              const statsMapKR = new Map();
-              const statsMapCN = new Map();
 
-              const dataKR = statsResKR.success ? statsResKR.data.KR : [];
-              const dataCN = statsResCN.success ? statsResCN.data.CN : [];
+              const { statsMapKR, statsMapCN } = buildStatsMaps(statsResKR, statsResCN);
 
-              if (statsResKR.success && dataKR) {
-                 for (const statItem of dataKR) {
-                    const spuData = statItem.spuSaleInfo || statItem.spuInfo || statItem;
-                    const sId = Number(spuData?.spuId || spuData?.goodsId);
-                    if (sId) statsMapKR.set(sId, statItem);
-                 }
-              }
-              
-              if (statsResCN.success && dataCN) {
-                 for (const statItem of dataCN) {
-                    const spuData = statItem.spuSaleInfo || statItem.spuInfo || statItem;
-                    const sId = Number(spuData?.spuId || spuData?.goodsId);
-                    if (sId) statsMapCN.set(sId, statItem);
-                 }
-              }
-
-              results = results.map(item => {
-                 const sId = Number(item.spuId || item.goodsId);
-                 const stKR = statsMapKR.get(sId);
-                 const stCN = statsMapCN.get(sId);
-                 return { 
-                   ...item, 
-                   skuStats: extractSkuListFromStat(stKR), 
-                   spuStats: stKR?.spuSaleInfo || stKR?.spuInfo || stKR || {},
-                   spuStatsCN: stCN?.spuSaleInfo || stCN?.spuInfo || stCN || {},
-                   skuStatsCN: extractSkuListFromStat(stCN)
-                 };
+              results = results.map((item) => {
+                const merged = { ...item };
+                applyStatsToItemData(merged, statsMapKR, statsMapCN);
+                return merged;
               });
             }
-
 
             for (const item of results) {
               parseAndPushItem(item, newItems, searchKeyword);
@@ -618,11 +1313,32 @@ export function SearchBoard() {
             const curExcluded = curExcludedRes.success && curExcludedRes.data ? curExcludedRes.data.map((r: any) => r.article_number) : [];
             setExcludedArticles(curExcluded);
             const filteredItems = newItems.filter(item => !curExcluded.includes(item.articleNumber));
-            
-            setItems(filteredItems);
-            setTotalCount(res.total || 0); // 참고용
+
+            // 동일 SPU 중복 제거 (브랜드 응답 중복 방어)
+            const brandItemKey = (it: any) => String(it.id ?? it.articleNumber);
+            const seenBrandKeys = new Set<string>();
+            const uniqueBrandItems = filteredItems.filter((it) => {
+              const key = brandItemKey(it);
+              if (seenBrandKeys.has(key)) return false;
+              seenBrandKeys.add(key);
+              return true;
+            });
+
+            if (page === 1) {
+              // 새 조회: 워크스페이스 교체
+              setItems(uniqueBrandItems);
+            } else {
+              // '더 불러오기': 기존 목록에 누적(append) + 중복 제거
+              setItems(prev => {
+                const existingKeys = new Set(prev.map(brandItemKey));
+                const appended = uniqueBrandItems.filter((it) => !existingKeys.has(brandItemKey(it)));
+                return [...prev, ...appended];
+              });
+            }
+            setTotalCount(res.total || 0); // 참고용 (브랜드 전체 건수)
             setCurrentPage(page);
             setLastBrandKeyword(searchKeyword);
+            saveBrandProgress(searchKeyword, { page, brandId: res.brandId ?? cachedBrandId, total: res.total || 0 });
             if (page === 1) setKeyword("");
           }
         } else {
@@ -634,6 +1350,320 @@ export function SearchBoard() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 브랜드 '더 불러오기' (다음 페이지 누적)
+  const handleLoadMore = async () => {
+    if (isLoadingMore || isLoading) return;
+    setIsLoadingMore(true);
+    try {
+      await handleSearch(currentPage + 1);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  // 품번(SPU) 검토완료 토글 — 전체 옵션 연동, UI 즉시 반영
+  const toggleItemHandled = (item: any) => {
+    const { spuKey, childSkuIds, allHandled } = getSpuReviewSummary(item);
+    if (!spuKey) return;
+    const next = !allHandled;
+    const prevSpuHandled = itemStatuses[spuKey]?.handled ?? false;
+    const prevSkuHandled = Object.fromEntries(
+      childSkuIds.map((id) => [id, skuStatuses[id]?.handled ?? false])
+    );
+
+    if (next) {
+      cancelRecommendations(childSkuIds);
+      setExpandedRows(prev => (prev[item.id] ? { ...prev, [item.id]: false } : prev));
+    }
+
+    const now = new Date().toISOString();
+    setItemStatuses(prev => ({
+      ...prev,
+      [spuKey]: { handled: next, memo: prev[spuKey]?.memo ?? null, updatedAt: now },
+    }));
+    setSkuStatuses(prev => {
+      const nextState = { ...prev };
+      childSkuIds.forEach((id) => {
+        nextState[id] = {
+          ...defaultSkuStatus(prev[id]),
+          handled: next,
+          handledAt: next ? now : null,
+          handledDate: next ? formatBidDate(now) : null,
+        };
+      });
+      return nextState;
+    });
+
+    void setItemHandled(spuKey, next, { articleNumber: item.articleNumber, title: item.title }).then((res) => {
+      if (!res.success) {
+        setItemStatuses(prev => ({
+          ...prev,
+          [spuKey]: {
+            handled: prevSpuHandled,
+            memo: prev[spuKey]?.memo ?? null,
+            updatedAt: prev[spuKey]?.updatedAt ?? null,
+          },
+        }));
+        showFeedback(`처리 상태 저장 실패: ${res.error ?? "테이블 미생성 여부를 확인하세요."}`);
+      }
+    });
+
+    if (childSkuIds.length > 0) {
+      void setManySkuHandled(childSkuIds, next, spuKey).then((res) => {
+        if (!res.success) {
+          setSkuStatuses(prev => {
+            const rolled = { ...prev };
+            childSkuIds.forEach((id) => {
+              rolled[id] = { ...defaultSkuStatus(prev[id]), handled: prevSkuHandled[id] ?? false };
+            });
+            return rolled;
+          });
+          showFeedback(`옵션 검토 상태 저장 실패: ${res.error ?? "sku_status.handled 컬럼을 확인하세요."}`);
+        }
+      });
+    }
+  };
+
+  const toggleSkuHandled = (skuId: string, spuId: string, childSkuIds: string[], item?: any) => {
+    const current = skuStatuses[skuId]?.handled ?? false;
+    const next = !current;
+    const prevSpuHandled = itemStatuses[spuId]?.handled ?? false;
+
+    setSkuStatuses(prev => ({
+      ...prev,
+      [skuId]: {
+        ...defaultSkuStatus(prev[skuId]),
+        handled: next,
+        handledAt: next ? new Date().toISOString() : null,
+        handledDate: next ? formatBidDate(new Date().toISOString()) : null,
+      },
+    }));
+
+    const newHandledCount = childSkuIds.filter((id) =>
+      id === skuId ? next : (skuStatuses[id]?.handled ?? false)
+    ).length;
+    const allNow = childSkuIds.length > 0 && newHandledCount === childSkuIds.length;
+
+    setItemStatuses(prev => ({
+      ...prev,
+      [spuId]: { handled: allNow, memo: prev[spuId]?.memo ?? null, updatedAt: allNow ? new Date().toISOString() : prev[spuId]?.updatedAt ?? null },
+    }));
+
+    if (allNow && item) {
+      cancelRecommendations(childSkuIds);
+      setExpandedRows(prev => (prev[item.id] ? { ...prev, [item.id]: false } : prev));
+    }
+
+    void setSkuHandled(skuId, next, spuId).then((res) => {
+      if (!res.success) {
+        setSkuStatuses(prev => ({
+          ...prev,
+          [skuId]: { ...defaultSkuStatus(prev[skuId]), handled: current },
+        }));
+        showFeedback(`옵션 검토 상태 저장 실패: ${res.error ?? "sku_status.handled 컬럼을 확인하세요."}`);
+      }
+    });
+
+    if (allNow !== prevSpuHandled) {
+      void setItemHandled(spuId, allNow, {
+        articleNumber: item?.articleNumber,
+        title: item?.title,
+      }).then((res) => {
+        if (!res.success) {
+          setItemStatuses(prev => ({
+            ...prev,
+            [spuId]: {
+              handled: prevSpuHandled,
+              memo: prev[spuId]?.memo ?? null,
+              updatedAt: prev[spuId]?.updatedAt ?? null,
+            },
+          }));
+        }
+      });
+    }
+  };
+
+  // 메모 저장
+  const handleSaveMemo = async (item: any) => {
+    if (!memoEditor) return;
+    const spuId = memoEditor.spuId;
+    const value = memoEditor.value.trim();
+    const prevMemo = itemStatuses[spuId]?.memo ?? null;
+
+    setItemStatuses(prev => ({
+      ...prev,
+      [spuId]: { handled: prev[spuId]?.handled ?? false, memo: value || null, updatedAt: new Date().toISOString() },
+    }));
+    setMemoEditor(null);
+
+    const res = await setItemMemo(spuId, value, { articleNumber: item.articleNumber, title: item.title });
+    if (!res.success) {
+      setItemStatuses(prev => ({
+        ...prev,
+        [spuId]: { handled: prev[spuId]?.handled ?? false, memo: prevMemo, updatedAt: prev[spuId]?.updatedAt ?? null },
+      }));
+      showFeedback(`메모 저장 실패: ${res.error ?? "테이블 미생성 여부를 확인하세요."}`);
+    } else {
+      showFeedback("메모를 저장했습니다.");
+    }
+  };
+
+  const handleSaveSkuMemo = async (skuId: string, spuId?: string) => {
+    if (!skuMemoEditor || skuMemoEditor.skuId !== skuId) return;
+    const value = skuMemoEditor.value.trim();
+    const prevMemo = skuStatuses[skuId]?.memo ?? null;
+
+    setSkuStatuses((prev) => ({
+      ...prev,
+      [skuId]: {
+        ...defaultSkuStatus(prev[skuId]),
+        memo: value || null,
+      },
+    }));
+    setSkuMemoEditor(null);
+    setSavingSkuMemo((prev) => ({ ...prev, [skuId]: true }));
+
+    const res = await setSkuMemo(skuId, value, spuId);
+    if (!res.success) {
+      setSkuStatuses((prev) => ({
+        ...prev,
+        [skuId]: { ...defaultSkuStatus(prev[skuId]), memo: prevMemo },
+      }));
+      showFeedback(`옵션 메모 저장 실패: ${res.error ?? "sku_status 테이블을 확인하세요."}`);
+    }
+    setSavingSkuMemo((prev) => {
+      const next = { ...prev };
+      delete next[skuId];
+      return next;
+    });
+  };
+
+  const handleToggleSkuManualBid = async (skuId: string, spuId?: string) => {
+    if (savingManualBidRef.current[skuId]) return;
+
+    const seq = (manualBidSaveSeqRef.current[skuId] ?? 0) + 1;
+    manualBidSaveSeqRef.current[skuId] = seq;
+
+    let next!: boolean;
+    let snapshot: SkuStatus | undefined;
+
+    setSkuStatuses((prev) => {
+      snapshot = prev[skuId] ? { ...prev[skuId] } : undefined;
+      const current = prev[skuId]?.manualBidMarked ?? false;
+      next = !current;
+      const now = new Date().toISOString();
+      return {
+        ...prev,
+        [skuId]: {
+          ...defaultSkuStatus(prev[skuId]),
+          manualBidMarked: next,
+          manualBidDate: next ? formatBidDate(now) : null,
+          manualBidAt: next ? now : null,
+          updatedAt: now,
+        },
+      };
+    });
+
+    savingManualBidRef.current = { ...savingManualBidRef.current, [skuId]: true };
+    setSavingManualBid((prev) => ({ ...prev, [skuId]: true }));
+
+    const res = await setSkuManualBidMarked(skuId, next, spuId);
+
+    if (manualBidSaveSeqRef.current[skuId] !== seq) return;
+
+    if (!res.success) {
+      setSkuStatuses((prev) => ({
+        ...prev,
+        [skuId]: snapshot ?? defaultSkuStatus(),
+      }));
+      showFeedback(`수동 입찰 표기 실패: ${res.error ?? "sku_status 테이블을 확인하세요."}`);
+    } else {
+      const now = new Date().toISOString();
+      setSkuStatuses((prev) => ({
+        ...prev,
+        [skuId]: {
+          ...defaultSkuStatus(prev[skuId]),
+          manualBidMarked: next,
+          manualBidDate: next ? formatBidDate(now) : null,
+          manualBidAt: next ? now : null,
+          updatedAt: now,
+        },
+      }));
+      showFeedback(next ? "입찰 완료로 수동 표기했습니다." : "수동 입찰 표기를 해제했습니다.");
+    }
+
+    const { [skuId]: _, ...restSaving } = savingManualBidRef.current;
+    savingManualBidRef.current = restSaving;
+    setSavingManualBid((prev) => {
+      const n = { ...prev };
+      delete n[skuId];
+      return n;
+    });
+  };
+
+  const handleToggleSkuStockMarked = async (skuId: string, spuId?: string) => {
+    if (savingStockMarkedRef.current[skuId]) return;
+
+    const seq = (stockMarkedSaveSeqRef.current[skuId] ?? 0) + 1;
+    stockMarkedSaveSeqRef.current[skuId] = seq;
+
+    let next!: boolean;
+    let snapshot: SkuStatus | undefined;
+
+    setSkuStatuses((prev) => {
+      snapshot = prev[skuId] ? { ...prev[skuId] } : undefined;
+      const current = prev[skuId]?.stockMarked ?? false;
+      next = !current;
+      const now = new Date().toISOString();
+      return {
+        ...prev,
+        [skuId]: {
+          ...defaultSkuStatus(prev[skuId]),
+          stockMarked: next,
+          stockMarkedDate: next ? formatBidDate(now) : null,
+          stockMarkedAt: next ? now : null,
+          updatedAt: now,
+        },
+      };
+    });
+
+    savingStockMarkedRef.current = { ...savingStockMarkedRef.current, [skuId]: true };
+    setSavingStockMarked((prev) => ({ ...prev, [skuId]: true }));
+
+    const res = await setSkuStockMarked(skuId, next, spuId);
+
+    if (stockMarkedSaveSeqRef.current[skuId] !== seq) return;
+
+    if (!res.success) {
+      setSkuStatuses((prev) => ({
+        ...prev,
+        [skuId]: snapshot ?? defaultSkuStatus(),
+      }));
+      showFeedback(`재고 보유 표기 실패: ${res.error ?? "sku_status 테이블을 확인하세요."}`);
+    } else {
+      const now = new Date().toISOString();
+      setSkuStatuses((prev) => ({
+        ...prev,
+        [skuId]: {
+          ...defaultSkuStatus(prev[skuId]),
+          stockMarked: next,
+          stockMarkedDate: next ? formatBidDate(now) : null,
+          stockMarkedAt: next ? now : null,
+          updatedAt: now,
+        },
+      }));
+      showFeedback(next ? "재고 보유로 표기했습니다." : "재고 보유 표기를 해제했습니다.");
+    }
+
+    const { [skuId]: _, ...restSaving } = savingStockMarkedRef.current;
+    savingStockMarkedRef.current = restSaving;
+    setSavingStockMarked((prev) => {
+      const n = { ...prev };
+      delete n[skuId];
+      return n;
+    });
   };
 
   const fetchNaverPrice = async (articleNumber: string) => {
@@ -668,19 +1698,17 @@ export function SearchBoard() {
       fetchNaverPrice(articleNum);
     }
 
-    // 자식(SKU)들의 판매량을 합산하여 SPU 전체 판매량 정의 (HK 데이터 우선)
+    const skuStatsCN = rawData.skuStatsCN || [];
     const skusKR = resolveSkuDetails(rawData, skuList);
-    const skusHK = rawData.skuStatsHK || rawData.skuStatsCN || [];
-    
-    // 중국 시장 총 판매량: 홍콩(HK) 글로벌 판매량이 0이면 HK SKU 합산, 그것도 0이면 KR 정보
-    const spuSalesHK = rawData.spuStatsHK?.commoditySales || {};
-    const sumHKGlobal = skusHK.reduce((sum: number, s: any) => sum + (s.commoditySales?.globalSoldNum30 || 0), 0);
-    const totalSalesValue = spuSalesHK.globalSoldNum30 || sumHKGlobal || rawData.spuStats?.commoditySales?.globalSoldNum30 || 0;
 
-    // 현지 판매자 판매량: 한국(KR) 로컬 판매량 우선, 0이면 KR SKU의 로컬 합산 (마마의 8, 12건 추적용)
-    const spuSalesKR = rawData.spuStats?.commoditySales || {};
-    const sumKRLocal = skusKR.reduce((sum: number, s: any) => sum + (s.commoditySales?.localSoldNum30 || 0), 0);
-    const localSalesValue = spuSalesKR.localSoldNum30 || sumKRLocal || 0;
+    const totalSalesValue = skusKR.reduce((sum: number, s: any) => {
+      const v = getSkuSalesValue(s, skuStatsCN, "globalSoldNum30");
+      return sum + (v ?? 0);
+    }, 0);
+    const localSalesValue = skusKR.reduce((sum: number, s: any) => {
+      const v = getSkuSalesValue(s, skuStatsCN, "localSoldNum30");
+      return sum + (v ?? 0);
+    }, 0);
 
     targetArray.push({
       id: finalId,
@@ -693,8 +1721,8 @@ export function SearchBoard() {
       image: spuInfo.logoUrl || spuInfo.images?.[0] || spuInfo.image || spuInfo.imgUrl || skuList[0]?.image || null,
       skus: skuList,
       raw: rawData,
-      salesVolume: totalSalesValue > 0 ? `${totalSalesValue.toLocaleString()}${totalSalesValue >= 500 ? "+" : ""}` : "-",
-      localSalesVolume: localSalesValue > 0 ? `${localSalesValue.toLocaleString()}` : "-",
+      salesVolume: formatSalesVolume(totalSalesValue),
+      localSalesVolume: formatSalesVolume(localSalesValue),
       minPrice: (() => {
         const pr = rawData.spuStats?.marketPrice?.globalMarketPriceVO?.amountText ?? 
                   rawData.spuStats?.minPrice?.globalMinPriceVO?.amountText ?? 
@@ -716,22 +1744,16 @@ export function SearchBoard() {
         const num = Number(String(pr).replace(/[^0-9]/g, ""));
         return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
       })(),
-
       skuDetails: skusKR.map((sk: any) => {
-        // 검색 결과(skuList)에서 해당 SKU의 상세 이미지 정보를 찾아 병합하옵니다.
         const originalSku = skuList.find((s: any) => String(s.skuId) === String(sk.skuId));
         return {
           ...sk,
           image: originalSku?.image || originalSku?.logoUrl || sk.image || null
         };
       }),
-      skuDetailsHK: skusHK,
-      skuStatsCN: rawData.skuStatsCN || [],
+      skuStatsCN,
       spuStats: rawData.spuStats || {},
-      spuStatsCN: rawData.spuStatsCN || {},
-      spuStatsHK: rawData.spuStatsHK || {},
     });
-
   };
 
   const removeItem = (indexToRemove: number) => {
@@ -748,98 +1770,153 @@ export function SearchBoard() {
         removeItem(itemToExclude.idx);
         setIsExcludeModalOpen(false);
       } else {
-        alert(`제외 처리 실패: ${res.error}`);
+        showFeedback(`제외 처리 실패: ${res.error}`);
       }
     } catch (e: any) {
-      alert(`오류: ${e.message}`);
+      showFeedback(`오류: ${e.message}`);
     } finally {
       setIsExcluding(false);
     }
   };
 
-  const isSearchExpanded = isHeaderVisible || isInputFocused;
   const toolbarBtn =
     "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors";
   const toolbarBtnOutline = `${toolbarBtn} border border-border bg-background hover:bg-secondary/60 text-foreground`;
   const toolbarBtnGhost = `${toolbarBtn} border border-transparent hover:bg-secondary/60 text-muted-foreground`;
 
+  // 컬럼 너비 리사이즈 핸들 (적중 영역 확대 + 더블클릭 초기화)
+  const ResizeHandle = ({ column }: { column: string }) => (
+    <div
+      onMouseDown={(e) => handleResizeStart(e, column)}
+      onDoubleClick={(e) => { e.stopPropagation(); resetColumnWidth(column); }}
+      onClick={(e) => e.stopPropagation()}
+      title="드래그하여 너비 조절 · 더블클릭 시 기본값 복원"
+      className="absolute -right-1.5 top-0 bottom-0 w-3 cursor-col-resize z-20 flex justify-center group/resize"
+    >
+      <div className="w-px h-full bg-transparent group-hover/resize:bg-primary/60 transition-colors" />
+    </div>
+  );
+
+  // 정렬 가능한 숫자형 헤더 (클릭 시 정렬 토글, 표시기 포함)
+  const SortIcon = ({ column }: { column: SortKey }) => {
+    const active = sortConfig?.key === column;
+    if (!active) return <ChevronsUpDown size={11} className="opacity-30 shrink-0" />;
+    return sortConfig?.dir === "asc"
+      ? <ArrowUp size={11} className="text-primary shrink-0" />
+      : <ArrowDown size={11} className="text-primary shrink-0" />;
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full">
       {/* Unified workspace card */}
       <div className="flex-1 min-h-0 bg-card border border-border/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
-        {/* Search — hover to expand */}
-        <div
-          className="shrink-0 border-b border-border/40"
-          onMouseEnter={() => setIsHeaderVisible(true)}
-          onMouseLeave={() => !isInputFocused && setIsHeaderVisible(false)}
-        >
-          {!isSearchExpanded ? (
-            <div
-              className="h-2 cursor-n-resize bg-gradient-to-r from-transparent via-primary/25 to-transparent"
-              onMouseEnter={() => setIsHeaderVisible(true)}
-            />
-          ) : (
-            <div className={`px-4 py-3 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-secondary/[0.03]"}`}>
-              <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-                <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-9">
-                  <button onClick={() => setSearchType("article")} className={`px-3 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>품번</button>
-                  <button onClick={() => setSearchType("brand")} className={`px-3 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>브랜드</button>
-                </div>
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
-                  <input
-                    type="text"
-                    value={keyword}
-                    onChange={(e) => setKeyword(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                    onFocus={() => setIsInputFocused(true)}
-                    onBlur={() => setIsInputFocused(false)}
-                    placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"}
-                    className="w-full h-9 pl-9 pr-4 bg-background border border-border/60 rounded-lg outline-none text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
-                  />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="flex h-9 items-center gap-1.5 rounded-lg border border-border/60 bg-background px-2.5">
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">조회수</span>
-                    <select
-                      value={pageSize}
-                      onChange={(e) => setPageSize(Number(e.target.value))}
-                      className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
-                    >
-                      <option value={50}>50개</option>
-                      <option value={100}>100개</option>
-                      <option value={200}>200개</option>
-                    </select>
-                  </div>
-                  <button
-                    onClick={() => handleSearch(1)}
-                    disabled={isLoading || !keyword.trim()}
-                    className="h-9 px-5 bg-primary text-primary-foreground rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors"
-                  >
-                    조회
-                  </button>
-                </div>
-              </div>
+        {/* Unified workspace toolbar with inline search */}
+        <div className={`shrink-0 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 border-b border-border/40 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-muted/30"}`}>
+          {/* Left: inline search */}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-8">
+              <button onClick={() => setSearchType("article")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>품번</button>
+              <button onClick={() => setSearchType("brand")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>브랜드</button>
             </div>
-          )}
-        </div>
-
-        {/* Workspace toolbar */}
-        <div className="shrink-0 flex items-center justify-between gap-4 px-4 py-3 border-b border-border/40 bg-muted/30">
-          <div className="flex items-center gap-3 min-w-0">
-            <h2 className="text-sm font-semibold tracking-tight shrink-0">비딩 워크스페이스</h2>
+            <div className={`relative h-8 transition-all duration-300 ease-out ${isInputFocused ? "w-72 md:w-96" : "w-48 md:w-56"}`}>
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground h-3.5 w-3.5 pointer-events-none" />
+              <input
+                type="text"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch(1)}
+                onFocus={() => setIsInputFocused(true)}
+                onBlur={() => setIsInputFocused(false)}
+                placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"}
+                className="w-full h-8 pl-8 pr-3 bg-background border border-border/60 rounded-lg outline-none text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow"
+              />
+              {isInputFocused && searchHistory.length > 0 && (
+                <div
+                  className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-card border border-border/60 rounded-lg shadow-lg overflow-hidden"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30">
+                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      <Clock size={11} /> 최근 검색
+                    </span>
+                    <button
+                      onClick={() => setSearchHistory(clearSearchHistory())}
+                      className="text-[10px] font-medium text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      전체 삭제
+                    </button>
+                  </div>
+                  <ul className="max-h-72 overflow-y-auto py-1">
+                    {searchHistory.map((entry) => (
+                      <li key={`${entry.type}:${entry.keyword}`}>
+                        <div className="group flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                          <button
+                            onClick={() => {
+                              setSearchType(entry.type);
+                              setKeyword(entry.keyword);
+                              setIsInputFocused(false);
+                              handleSearch(1);
+                            }}
+                            className="flex-1 flex items-center gap-2 min-w-0 text-left"
+                          >
+                            <span
+                              className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                                entry.type === "article"
+                                  ? "bg-primary/10 text-primary"
+                                  : "bg-secondary text-secondary-foreground"
+                              }`}
+                            >
+                              {entry.type === "article" ? "품번" : "브랜드"}
+                            </span>
+                            <span className="flex-1 truncate text-xs text-foreground">{entry.keyword}</span>
+                          </button>
+                          <button
+                            onClick={() => setSearchHistory(removeSearchHistory(entry.keyword, entry.type))}
+                            className="shrink-0 p-0.5 rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all"
+                            title="이 기록 삭제"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => handleSearch(1)}
+              disabled={isLoading || !keyword.trim()}
+              className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 shrink-0`}
+            >
+              {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+              조회
+            </button>
             <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold shrink-0">
               {showOnlyProfitable ? flattenedRows.length : items.length} 건
             </span>
             {error && (
-              <div className="flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
+              <div className="hidden lg:flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
                 <AlertCircle size={13} className="shrink-0" />
                 {error}
               </div>
             )}
           </div>
+          {/* Right: view config + filters + actions */}
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="flex items-center gap-1.5 pr-2 mr-1 border-r border-border/50">
+              <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border/60 bg-background px-2.5">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">조회수</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
+                >
+                  <option value={50}>50개</option>
+                  <option value={100}>100개</option>
+                  <option value={200}>200개</option>
+                </select>
+              </div>
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">분류</span>
               <select
                 value={selectedCategory}
@@ -863,8 +1940,35 @@ export function SearchBoard() {
               <Filter size={13} className={showOnlyProfitable ? "fill-blue-600/10" : ""} />
               수익 상품만
             </button>
-            <button onClick={saveWidths} className={`${toolbarBtnOutline} text-primary border-primary/30 hover:bg-primary/5`}>
-              <ArrowLeftRight size={13} /> 열 너비
+            <button
+              onClick={() => setShowOnlyUnprocessed(!showOnlyUnprocessed)}
+              title="검토완료된 품번을 숨깁니다"
+              className={`${toolbarBtn} border ${
+                showOnlyUnprocessed
+                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600"
+                  : "border-border bg-background hover:bg-secondary/60 text-muted-foreground"
+              }`}
+            >
+              <Flag size={13} className={showOnlyUnprocessed ? "fill-emerald-600/10" : ""} />
+              미처리만
+            </button>
+            <button
+              onClick={() => {
+                setItems([]);
+                setSelectedSkus({});
+                setExpandedRows({});
+                setError(null);
+                setTotalCount(0);
+                showFeedback("워크스페이스 목록을 비웠습니다.");
+              }}
+              disabled={items.length === 0}
+              title="검색 결과 목록을 모두 비웁니다"
+              className={`${toolbarBtnOutline} text-muted-foreground hover:text-destructive disabled:opacity-30`}
+            >
+              <Trash2 size={13} /> 목록 비우기
+            </button>
+            <button onClick={resetAllWidths} title="열 너비를 기본값으로 초기화" className={`${toolbarBtnOutline} text-muted-foreground hover:text-foreground`}>
+              <RotateCcw size={13} /> 너비 초기화
             </button>
             <button onClick={() => setIsSettingsOpen(true)} className={toolbarBtnGhost}>
               <Settings2 size={13} /> 마진
@@ -878,87 +1982,123 @@ export function SearchBoard() {
             </button>
           </div>
         </div>
-        
+        {/* Brand exploration hint */}
+        {brandHint && brandHint.page > 0 && (
+          <div className="shrink-0 px-4 py-1.5 border-b border-border/40 bg-secondary/[0.03] flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Clock size={12} className="text-primary/70" />
+            이전에 <span className="font-bold text-foreground">{brandHint.page}페이지</span>까지 탐색했습니다
+            {brandHint.total > 0 && <span className="opacity-60">(전체 {brandHint.total.toLocaleString()}개)</span>}
+            <span className="opacity-50">— 조회 후 &lsquo;더 불러오기&rsquo;로 이어서 탐색하세요.</span>
+          </div>
+        )}
+
         <div className="overflow-x-auto flex-1 custom-scrollbar w-full">
           <table className={`w-full text-[13px] text-left whitespace-nowrap table-fixed border-collapse ${resizing ? 'cursor-col-resize select-none' : ''}`}>
             <thead className="text-[11px] text-muted-foreground bg-muted/20 sticky top-0 z-20 border-b border-border/40 uppercase font-semibold tracking-wide">
-              <tr className="h-10">
-                <th style={{ width: `${columnWidths.skip}px` }} className="relative group/header px-1 text-center bg-muted/30 border-r border-border/30">
-                  <span>SKIP</span>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'skip')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+              <tr className="h-10 align-middle">
+                <th style={{ width: `${columnWidths.manage}px` }} className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-muted/30">
+                  <div className="flex items-center justify-center gap-2">
+                    <Checkbox
+                      aria-label="현재 목록의 모든 옵션 선택"
+                      size="sm"
+                      checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                      onCheckedChange={toggleSelectAllVisible}
+                    />
+                    <span>관리</span>
+                  </div>
+                  <ResizeHandle column="manage" />
                 </th>
 
-                <th style={{ width: '40px' }} className="px-1 text-center border-r border-secondary/10">  </th>
-                
-                <th style={{ width: `${columnWidths.info}px` }} className="relative group/header px-4 border-r border-secondary/10">
+                <th style={{ width: `${columnWidths.info}px` }} className="relative group/header px-2 align-middle border-r border-secondary/10">
                   <span>{showOnlyProfitable ? "알짜 수익 상품 (SKU)" : "중국 시장 정보"}</span>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'info')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="info" />
                 </th>
                 
-                <th style={{ width: `${columnWidths.avg}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
-                  <div className="flex flex-col leading-tight -space-y-0.5">
-                    <span>30일 거래가</span>
-                    <span className="text-[9px] opacity-60">(전 세계 평균)</span>
+                <th
+                  style={{ width: `${columnWidths.avg}px` }}
+                  onClick={() => toggleSort("avg")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-primary/[0.02] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">30일 거래가 <SortIcon column="avg" /></span>
+                    <span className="text-[9px] font-normal opacity-60 normal-case tracking-normal">(전 세계 평균)</span>
                   </div>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'avg')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="avg" />
                 </th>
                 
-                <th style={{ width: `${columnWidths.exposure}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-orange-500/[0.02]">
-                  <div className="flex flex-col leading-tight -space-y-0.5">
-                    <span>중국 노출가</span>
-                    <span className="text-[8px] opacity-60 hover:opacity-100 transition-opacity">판매자 센터 노출가 기준</span>
+                <th
+                  style={{ width: `${columnWidths.exposure}px` }}
+                  onClick={() => toggleSort("exposure")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-orange-500/[0.02] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">중국 노출가 <SortIcon column="exposure" /></span>
+                    <span className="text-[9px] font-normal opacity-60 normal-case tracking-normal">판매자 센터 기준</span>
                   </div>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'exposure')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="exposure" />
                 </th>
 
-                <th style={{ width: `${columnWidths.naver}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.03]">
-                  <span>네이버 최저/원가</span>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'naver')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                <th
+                  style={{ width: `${columnWidths.naver}px` }}
+                  onClick={() => toggleSort("naver")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-emerald-500/[0.03] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">네이버 최저/원가 <SortIcon column="naver" /></span>
+                  </div>
+                  <ResizeHandle column="naver" />
                 </th>
 
-                <th style={{ width: `${columnWidths.profit}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-blue-500/[0.04]">
-                  <div className="flex flex-col leading-tight -space-y-0.5">
-                    <span>순수익</span>
-                    <span className="text-[9px] opacity-60">(노출가-수수료-원가)</span>
+                <th
+                  style={{ width: `${columnWidths.profit}px` }}
+                  onClick={() => toggleSort("profit")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-blue-500/[0.04] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">순수익 <SortIcon column="profit" /></span>
+                    <span className="text-[9px] font-normal opacity-60 normal-case tracking-normal">(노출가-수수료-원가)</span>
                   </div>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'profit')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="profit" />
                 </th>
                 
-                <th style={{ width: `${columnWidths.salesChina}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.02]">
-                  <div className="flex flex-col leading-tight -space-y-1">
-                    <span>30일 판매량</span>
-                    <span className="text-[9px] opacity-60">(중국)</span>
+                <th
+                  style={{ width: `${columnWidths.salesChina}px` }}
+                  onClick={() => toggleSort("salesChina")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-primary/[0.02] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">30일 판매량 <SortIcon column="salesChina" /></span>
+                    <span className="text-[9px] font-normal opacity-60 normal-case tracking-normal">(중국)</span>
                   </div>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'salesChina')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="salesChina" />
                 </th>
 
-                <th style={{ width: `${columnWidths.salesLocal}px` }} className="relative group/header px-1 text-center border-r border-secondary/10 bg-primary/[0.04]">
-                  <div className="flex flex-col leading-tight -space-y-1">
-                    <span>30일 판매량</span>
-                    <span className="text-[9px] opacity-60">(현지 판매자)</span>
+                <th
+                  style={{ width: `${columnWidths.salesLocal}px` }}
+                  onClick={() => toggleSort("salesLocal")}
+                  className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-primary/[0.04] cursor-pointer select-none hover:text-foreground transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center leading-[1.15]">
+                    <span className="flex items-center gap-1">30일 판매량 <SortIcon column="salesLocal" /></span>
+                    <span className="text-[9px] font-normal opacity-60 normal-case tracking-normal">(현지 판매자)</span>
                   </div>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'salesLocal')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="salesLocal" />
                 </th>
 
-                <th style={{ width: `${columnWidths.bid}px` }} className="relative group/header px-1 text-center border-r border-secondary/10">
+                <th style={{ width: `${columnWidths.bid}px` }} className="relative group/header px-1 text-center align-middle">
                   <span>나의 입찰 제안</span>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'bid')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
-                </th>
-                
-                <th style={{ width: `${columnWidths.manage}px` }} className="relative group/header px-1 text-center">
-                  <span>관리</span>
-                  <div onMouseDown={(e) => handleResizeStart(e, 'manage')} className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10" />
+                  <ResizeHandle column="bid" />
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary/10">
               {(!showOnlyProfitable && filteredItems.length === 0) || (showOnlyProfitable && filteredFlattenedRows.length === 0) ? (
-                <tr><td colSpan={10} className="py-16 text-center text-muted-foreground/70 text-sm">
-                  {items.length === 0 ? "검색을 시작해 주소서." : "해당 분류나 수익 조건에 맞는 보배가 장부에 없사옵니다."}
+                <tr><td colSpan={9} className="py-16 text-center text-muted-foreground/70 text-sm">
+                  {items.length === 0 ? "검색을 시작해 주세요." : "해당 분류나 수익 조건에 맞는 상품이 목록에 없습니다."}
                 </td></tr>
               ) : showOnlyProfitable ? (
                 // --- 마마를 위한 알짜배기 목록 (Flattened Mode) ---
-                filteredFlattenedRows.map((row, idx) => {
+                sortedFlattenedRows.map((row, idx) => {
                   const item = row.parent;
                   const sku = row;
                   const rec = skuRecommendations[sku.skuId];
@@ -970,42 +2110,81 @@ export function SearchBoard() {
                   const margin = getMargin(bidPrice, naverPrice || undefined);
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isSkipped = skippedSkuIds.has(String(sku.skuId));
+                  const skuKey = String(sku.skuId);
+                  const skuStatus = skuStatuses[skuKey];
+                  const { systemBid, manualBid } = getSkuBidViews(skuKey, skuStatus);
+                  const spuIdKey = String(item.id).replace(/[^0-9]/g, "");
+                  const childSkuIds = (item.skuDetails || []).map((s: any) => String(s.skuId));
+                  const isSkuHandled = skuStatus?.handled ?? false;
+                  const rowVisual = getSkuRowVisualState({
+                    hasSystemBid: !!systemBid,
+                    hasManualBid: !!manualBid,
+                    hasStockMarked: !!skuStatus?.stockMarked,
+                    isSkipped,
+                    isReviewed: isSkuHandled,
+                  });
+                  const skuActivity = resolveSkuActivity(skuKey, skuStatus);
+                  const activityLine = formatActivityLine(skuActivity);
 
                   return (
-                    <tr key={`${sku.skuId}-${idx}`} className={`hover:bg-blue-500/[0.02] transition-colors group h-16 border-l-2 border-l-transparent hover:border-l-blue-500 ${isSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
-                      <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10">
-                        <input 
-                          type="checkbox" 
-                          checked={isSkipped} 
-                          onChange={(e) => { e.stopPropagation(); handleToggleSkip(row, true); }}
-                          className="w-4 h-4 cursor-pointer accent-blue-500 shadow-sm"
+                    <tr key={`${sku.skuId}-${idx}`} className={`hover:bg-secondary/[0.02] transition-colors group h-16 ${rowVisual.rowClass} ${rowVisual.fade ? "opacity-40 grayscale-[0.5]" : ""}`}>
+                      {/* 관리 (선택 + 입찰 + 재고 + 검토 + 메모 + 스킵) */}
+                      <td className={`px-1 text-center border-r border-secondary/10 relative ${rowVisual.manageCellClass}`}>
+                        <SkuRowManageCell
+                          skuId={sku.skuId}
+                          checked={!!selectedSkus[sku.skuId]}
+                          onCheckedChange={() => toggleSkuSelection(sku.skuId)}
+                          systemBid={systemBid}
+                          manualBid={manualBid}
+                          onManualBidToggle={() => handleToggleSkuManualBid(skuKey, spuIdKey)}
+                          isSavingManualBid={!!savingManualBid[skuKey]}
+                          stockMarked={!!skuStatus?.stockMarked}
+                          stockMarkedDate={skuStatus?.stockMarkedDate}
+                          onStockToggle={() => handleToggleSkuStockMarked(skuKey, spuIdKey)}
+                          isSavingStock={!!savingStockMarked[skuKey]}
+                          isHandled={isSkuHandled}
+                          onHandledToggle={() => toggleSkuHandled(skuKey, spuIdKey, childSkuIds, item)}
+                          hasMemo={!!skuStatus?.memo}
+                          memoTitle={skuStatus?.memo ?? undefined}
+                          activityTitle={activityLine ?? undefined}
+                          onMemoClick={() =>
+                            setSkuMemoEditor(
+                              skuMemoEditor?.skuId === skuKey
+                                ? null
+                                : { skuId: skuKey, spuId: spuIdKey, value: skuStatus?.memo ?? "" }
+                            )
+                          }
+                          isSkipped={isSkipped}
+                          onSkipToggle={() => handleToggleSkip(row, true)}
                         />
-                      </td>
-                      <td className="px-1 text-center border-r border-secondary/10">
-                        <div className="flex flex-col items-center gap-2 py-1">
-                          <input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3.5 h-3.5 accent-primary cursor-pointer shadow-sm" />
-                          
-                          {/* 입찰 이력 아이콘 및 툴팁 */}
-                          {bidHistory[String(item.id)] ? (
-                            <div className="relative group/bid-history">
-                              <div className="p-1 text-blue-500 bg-blue-500/10 rounded-full cursor-help hover:bg-blue-500/20 transition-colors">
-                                <Clock size={12} strokeWidth={3} />
-                              </div>
-                              {/* 입찰 정보 툴팁 */}
-                              <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 hidden group-hover/bid-history:block z-[60] animate-in fade-in slide-in-from-left-1 duration-200">
-                                <div className="bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded shadow-xl whitespace-nowrap font-bold flex items-center gap-1.5 border border-white/10">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                                  입찰 완료 (₩{bidHistory[String(item.id)].price.toLocaleString()}, {bidHistory[String(item.id)].date})
-                                </div>
-                                <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
-                              </div>
+                        {skuMemoEditor?.skuId === String(sku.skuId) && (
+                          <div className="absolute left-2 top-full mt-1 z-[70] w-64 bg-background border border-border rounded-lg shadow-xl p-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-bold text-foreground">옵션 메모 · {propsStr}</span>
+                              <button onClick={() => setSkuMemoEditor(null)} className="text-muted-foreground/50 hover:text-foreground"><X size={13} /></button>
                             </div>
-                          ) : (
-                            <div className="w-4 h-4" /> // 이력이 없을 때 정렬 유지용
-                          )}
-                        </div>
+                            <textarea
+                              autoFocus
+                              value={skuMemoEditor.value}
+                              onChange={(e) => setSkuMemoEditor({ skuId: String(sku.skuId), spuId: spuIdKey, value: e.target.value })}
+                              placeholder="이 옵션에 대한 메모"
+                              className="w-full h-20 text-[11px] p-2 bg-secondary/20 border border-border/50 rounded-md outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                            />
+                            <div className="flex justify-end gap-1.5 mt-1.5">
+                              <button onClick={() => setSkuMemoEditor(null)} className="px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground rounded-md">취소</button>
+                              <button
+                                onClick={() => handleSaveSkuMemo(String(sku.skuId), spuIdKey)}
+                                disabled={!!savingSkuMemo[String(sku.skuId)]}
+                                className="px-2.5 py-1 text-[11px] font-bold bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-1 disabled:opacity-40"
+                              >
+                                {savingSkuMemo[String(sku.skuId)] ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                                저장
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </td>
-                      <td className="px-4 border-r border-secondary/10 overflow-hidden">
+                      <td className="px-2 border-r border-secondary/10 overflow-hidden">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 shrink-0 bg-white border border-secondary/20 rounded-lg p-1 relative shadow-sm">
                             {sku.image || item.image ? <img src={sku.image || item.image} className="w-full h-full object-contain" /> : <ImageIcon size={16} className="opacity-10 mx-auto mt-2" />}
@@ -1014,13 +2193,55 @@ export function SearchBoard() {
                           <div className="flex flex-col min-w-0 flex-1 leading-tight gap-0.5">
                             <div className="flex items-center gap-2 overflow-hidden">
                               <span className="bg-blue-500/10 text-blue-600 text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 uppercase">{propsStr}</span>
+                              {systemBid && <BidStatusIndicator bid={systemBid} variant="badge" />}
+                              {manualBid && (
+                                <BidStatusIndicator
+                                  bid={manualBid}
+                                  variant="badge"
+                                  removable
+                                  onClick={() => handleToggleSkuManualBid(skuKey, spuIdKey)}
+                                />
+                              )}
+                              {skuStatus?.stockMarked && (
+                                <StockStatusIndicator
+                                  date={skuStatus.stockMarkedDate ?? formatBidDate(new Date().toISOString())}
+                                  variant="badge"
+                                  removable
+                                  onClick={() => handleToggleSkuStockMarked(skuKey, spuIdKey)}
+                                />
+                              )}
                               <span className="font-bold text-foreground text-[12px] truncate tracking-tight">{item.title}</span>
                             </div>
                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
                               <CopyableArticleNumber articleNumber={item.articleNumber} />
                               <span className="opacity-30">|</span>
                               <span className="font-bold text-foreground/40">{item.brand}</span>
+                              {systemBid && (
+                                <span className="text-[9px] text-blue-700 font-semibold normal-case tracking-normal">
+                                  · 입찰 ₩{systemBid.price?.toLocaleString()} ({systemBid.date})
+                                </span>
+                              )}
+                              {manualBid && !systemBid && (
+                                <span className="text-[9px] text-red-700 font-semibold normal-case tracking-normal">
+                                  · 수동표기 ({manualBid.date})
+                                </span>
+                              )}
+                              {skuStatus?.stockMarked && (
+                                <span className="text-[9px] text-emerald-700 font-semibold normal-case tracking-normal">
+                                  · 재고보유 ({skuStatus.stockMarkedDate})
+                                </span>
+                              )}
                             </div>
+                            {activityLine && (
+                              <span className="text-[9px] text-muted-foreground/70 font-medium normal-case tracking-normal">
+                                {activityLine}
+                              </span>
+                            )}
+                            {skuStatus?.memo && (
+                              <span className="text-[9px] text-amber-700/80 truncate max-w-full" title={skuStatus.memo}>
+                                {skuStatus.memo}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -1081,44 +2302,33 @@ export function SearchBoard() {
                           );
                         })()}
                       </td>
-                      {/* 판매량 (중국/현지) */}
+                      {/* 판매량 (중국/현지) — CN 통계 우선, 없으면 KR */}
                       <td className="px-1 text-center border-r border-secondary/10 bg-primary/[0.01]">
                          <div className="font-bold text-[11px] text-foreground/50">
-                            {(() => {
-                              const skuCN = item.skuStatsCN?.find((s: any) => s.skuId === sku.skuId);
-                              const val = skuCN?.commoditySales?.globalSoldNum30 ?? sku.commoditySales?.globalSoldNum30;
-                              return val !== undefined ? `${val.toLocaleString()}` : "—";
-                            })()}
+                            {formatSalesVolume(getSkuSalesValue(sku, item.skuStatsCN, "globalSoldNum30"))}
                          </div>
                       </td>
                       <td className="px-1 text-center border-r border-secondary/10 bg-secondary/[0.01]">
                         <div className="font-bold text-[11px] text-foreground/40">
-                           {(() => {
-                             const skuCN = item.skuStatsCN?.find((s: any) => s.skuId === sku.skuId);
-                             const val = skuCN?.commoditySales?.localSoldNum30 ?? sku.commoditySales?.localSoldNum30;
-                             return val !== undefined ? `${val.toLocaleString()}` : "—";
-                           })()}
-                         </div>
+                           {formatSalesVolume(getSkuSalesValue(sku, item.skuStatsCN, "localSoldNum30"))}
+                        </div>
                       </td>
-                      {/* 입찰 제안 */}
-                      <td className="px-1 text-center border-r border-secondary/10 bg-blue-500/[0.01]">
-                         <div className="flex items-center justify-between px-2 gap-2">
-                           <div className="relative group/input w-full max-w-[120px] mx-auto">
+                      {/* 나의 입찰 제안 (가격 입력 + BID) */}
+                      <td className="px-2 text-center bg-blue-500/[0.01]">
+                         <div className="flex items-center justify-center gap-1.5">
+                           <div className="relative group/input flex-1 max-w-[120px]">
                              <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
                              <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">₩</span>
                            </div>
+                           <button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!bidPrice || isBidding} className="px-4 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic shrink-0">BID</button>
                          </div>
-                      </td>
-                      {/* 관리 (BID) */}
-                      <td className="px-2 text-center">
-                         <button onClick={() => handleSingleBid(sku.skuId, item.id)} disabled={!bidPrice || isBidding} className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic">BID</button>
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 // --- 기존 품번 중심 목록 (Hierarchy Mode) ---
-                filteredItems.map((item, idx) => {
+                sortedItems.map((item, idx) => {
                   const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
                   const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
                   
@@ -1134,47 +2344,121 @@ export function SearchBoard() {
 
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isExpanded = !!expandedRows[item.id];
-                  const allSkusSkipped = (item.skuDetails || []).length > 0 && (item.skuDetails || []).every((sku: any) => skippedSkuIds.has(String(sku.skuId)));
+                  const childSkuIds = (item.skuDetails || []).map((sku: any) => String(sku.skuId));
+                  const allSkusSkipped = childSkuIds.length > 0 && childSkuIds.every((id: string) => skippedSkuIds.has(id));
+                  const selectedChildCount = childSkuIds.filter((id: string) => selectedSkus[id]).length;
+                  const allChildSelected = childSkuIds.length > 0 && selectedChildCount === childSkuIds.length;
+                  const someChildSelected = selectedChildCount > 0 && !allChildSelected;
+
+                  // 품번(SPU) 처리 상태/메모
+                  const spuKey = String(item.id).replace(/[^0-9]/g, "");
+                  const status = itemStatuses[spuKey];
+                  const hasMemo = !!status?.memo;
+                  const spuBidSummary = getSpuBidSummary(item);
+                  const reviewSummary = getSpuReviewSummary(item);
+                  const { allHandled, someHandled, reviewState, handledCount, totalCount } = reviewSummary;
+                  const spuVisual = getSpuRowVisualState({
+                    hasAnyBid: spuBidSummary.bidCount > 0,
+                    allSkusSkipped,
+                    allHandled,
+                    someHandled,
+                  });
+                  const spuActivityLine = formatActivityLine(
+                    getSpuLastActivity(
+                      childSkuIds.map((id) => resolveSkuActivity(id, skuStatuses[id])),
+                      status?.updatedAt,
+                      status?.handled
+                    )
+                  );
 
                   return (
                     <React.Fragment key={`${item.articleNumber}-${idx}`}>
                       <tr
-                        className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? 'bg-secondary/[0.02]' : ''} ${allSkusSkipped ? 'opacity-40 grayscale-[0.5]' : ''} ${item.skuDetails?.length > 0 ? 'cursor-pointer' : ''}`}
+                        className={`hover:bg-secondary/5 transition-colors group h-14 ${isExpanded ? "bg-secondary/[0.02]" : ""} ${spuVisual.rowClass} ${spuVisual.fade ? "opacity-40 grayscale-[0.5]" : ""} ${item.skuDetails?.length > 0 ? "cursor-pointer" : ""}`}
                         onClick={() => {
                           if (item.skuDetails?.length > 0) toggleRow(item.id, item.skuDetails);
                         }}
                       >
-                        <td className="px-1 text-center bg-secondary/[0.02] border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
-                          <input 
-                            type="checkbox" 
-                            checked={allSkusSkipped} 
-                            onChange={(e) => { e.stopPropagation(); handleToggleSkip(item, false); }}
-                            className="w-4 h-4 cursor-pointer accent-blue-500 shadow-sm"
-                          />
-                        </td>
-                        <td className="px-1 text-center border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-col items-center gap-2 py-1">
-                            <input type="checkbox" className="w-3.5 h-3.5 accent-primary cursor-pointer" />
-                            
-                            {bidHistory[String(item.id)] ? (
-                              <div className="relative group/bid-history">
-                                <div className="p-1 text-blue-500 bg-blue-500/10 rounded-full cursor-help hover:bg-blue-500/20 transition-colors">
-                                  <Clock size={12} strokeWidth={3} />
-                                </div>
-                                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 hidden group-hover/bid-history:block z-[60] animate-in fade-in slide-in-from-left-1 duration-200">
-                                  <div className="bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded shadow-xl whitespace-nowrap font-bold flex items-center gap-1.5 border border-white/10">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                                    입찰 완료 (₩{bidHistory[String(item.id)].price.toLocaleString()}, {bidHistory[String(item.id)].date})
-                                  </div>
-                                  <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="w-4 h-4" />
-                            )}
+                        <td className="px-1 text-center relative border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-start gap-0">
+                            {/* slot1: 선택 */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <Checkbox
+                                aria-label="이 품번의 모든 옵션 입찰 선택"
+                                checked={allChildSelected ? true : someChildSelected ? "indeterminate" : false}
+                                onCheckedChange={() => setManySelected(childSkuIds, !allChildSelected)}
+                              />
+                            </div>
+                            {/* slot2: 검토완료 */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <ReviewCheckButton
+                                state={reviewState}
+                                partialLabel={someHandled ? `${handledCount}/${totalCount}` : undefined}
+                                onClick={() => toggleItemHandled(item)}
+                              />
+                            </div>
+                            {/* slot3: 메모 */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <button
+                                onClick={() => setMemoEditor(memoEditor?.spuId === spuKey ? null : { spuId: spuKey, value: status?.memo ?? "" })}
+                                title={hasMemo ? `메모: ${status?.memo}` : "메모 추가"}
+                                className={`p-1 rounded-md transition-all ${hasMemo ? 'text-amber-600 bg-amber-500/10 hover:bg-amber-500/20' : 'text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5'}`}
+                              >
+                                <StickyNote size={14} />
+                              </button>
+                            </div>
+                            {/* slot4: 스킵 (세부옵션 눈 아이콘과 수직 정렬) */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <button
+                                onClick={() => handleToggleSkip(item, false)}
+                                disabled={childSkuIds.length === 0}
+                                title={allSkusSkipped ? "이 품번 전체 옵션 스킵 해제" : "이 품번 전체 옵션(사이즈) 스킵"}
+                                className={`p-1 rounded-md transition-all disabled:opacity-20 ${allSkusSkipped ? 'text-orange-600 bg-orange-500/15 ring-1 ring-orange-500/40' : 'text-muted-foreground/25 hover:text-muted-foreground/60 hover:bg-secondary/60'}`}
+                              >
+                                {allSkusSkipped ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                            </div>
+                            {/* slot5: 영구 제외 */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <button
+                                onClick={() => {
+                                  setItemToExclude({ articleNumber: item.articleNumber, title: item.title, idx });
+                                  setExcludeReason("");
+                                  setIsExcludeModalOpen(true);
+                                }}
+                                title="이 품번 검색에서 영구 제외"
+                                className="p-1 text-muted-foreground/30 hover:text-orange-500 hover:bg-orange-500/5 rounded-md transition-all"
+                              ><Ban size={14} /></button>
+                            </div>
+                            {/* slot6: 임시 삭제 */}
+                            <div className="w-6 flex items-center justify-center shrink-0">
+                              <button onClick={() => removeItem(idx)} title="목록에서 임시 삭제" className="p-1 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all"><Trash2 size={14} /></button>
+                            </div>
                           </div>
+
+                          {memoEditor?.spuId === spuKey && (
+                            <div className="absolute left-2 top-full mt-1 z-[70] w-64 bg-background border border-border rounded-lg shadow-xl p-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[11px] font-bold text-foreground">메모</span>
+                                <button onClick={() => setMemoEditor(null)} className="text-muted-foreground/50 hover:text-foreground"><X size={13} /></button>
+                              </div>
+                              <textarea
+                                autoFocus
+                                value={memoEditor.value}
+                                onChange={(e) => setMemoEditor({ spuId: spuKey, value: e.target.value })}
+                                placeholder="이 품번에 대한 메모 (예: 가격 추적, 재입고 대기 등)"
+                                className="w-full h-20 text-[11px] p-2 bg-secondary/20 border border-border/50 rounded-md outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                              />
+                              <div className="flex justify-end gap-1.5 mt-1.5">
+                                <button onClick={() => setMemoEditor(null)} className="px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground rounded-md">취소</button>
+                                <button onClick={() => handleSaveMemo(item)} className="px-2.5 py-1 text-[11px] font-bold bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-1">
+                                  <Save size={11} /> 저장
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </td>
-                        <td className="px-4 border-r border-secondary/10 overflow-hidden">
+                        <td className="px-2 border-r border-secondary/10 overflow-hidden">
                           <div className="flex items-center gap-3">
                             {item.skuDetails?.length > 0 ? (
                               <button
@@ -1201,6 +2485,25 @@ export function SearchBoard() {
                                     {item.skuDetails.length}개 옵션
                                   </span>
                                 )}
+                                {spuBidSummary.bidCount > 0 && (
+                                  <SpuBidSummary
+                                    variant="inline"
+                                    systemCount={spuBidSummary.systemCount}
+                                    manualCount={spuBidSummary.manualCount}
+                                    totalCount={spuBidSummary.totalCount}
+                                    bids={spuBidSummary.bids}
+                                  />
+                                )}
+                                {allHandled && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 font-bold shrink-0 flex items-center gap-0.5">
+                                    <CheckCircle2 size={9} /> 검토완료
+                                  </span>
+                                )}
+                                {someHandled && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 border border-amber-500/30 font-bold shrink-0 flex items-center gap-0.5">
+                                    <CheckCircle2 size={9} /> 검토 {handledCount}/{totalCount}
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider">
                                 <CopyableArticleNumber articleNumber={item.articleNumber} />
@@ -1208,6 +2511,11 @@ export function SearchBoard() {
                                 <span>{item.category}</span>
                                 {isBiddable && <span className="ml-1 bg-emerald-500/10 text-emerald-600 text-[8px] px-1 py-0.5 rounded border border-emerald-500/20 font-bold">입찰 가능</span>}
                               </div>
+                              {spuActivityLine && (
+                                <span className="text-[9px] text-muted-foreground/70 font-medium normal-case tracking-normal">
+                                  {spuActivityLine}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -1283,21 +2591,7 @@ export function SearchBoard() {
                         <td className="px-1 text-center border-r border-secondary/10 bg-secondary/[0.01]">
                           <div className="font-bold text-[11px] text-foreground/50">{item.localSalesVolume}</div>
                         </td>
-                        <td className="px-1 text-center border-secondary/10 text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
-                        <td className="px-1 text-center">
-                          <div className="flex items-center justify-center gap-0.5">
-                            <button 
-                              onClick={() => {
-                                setItemToExclude({ articleNumber: item.articleNumber, title: item.title, idx });
-                                setExcludeReason("");
-                                setIsExcludeModalOpen(true);
-                              }} 
-                              title="이 품번 검색에서 영구 제외"
-                              className="p-1.5 text-muted-foreground/30 hover:text-orange-500 hover:bg-orange-500/5 rounded-md transition-all"
-                            ><Ban size={14}/></button>
-                            <button onClick={() => removeItem(idx)} title="목록에서 임시 삭제" className="p-1.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all"><Trash2 size={14}/></button>
-                          </div>
-                        </td>
+                        <td className="px-1 text-center text-[10px] text-muted-foreground/30 italic font-bold">SELECT SKU</td>
                       </tr>
 
                       {isExpanded && item.skuDetails?.map((sku: any) => {
@@ -1310,19 +2604,80 @@ export function SearchBoard() {
                         const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
                         const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
                         const isSkuSkipped = skippedSkuIds.has(String(sku.skuId));
-                        
+                        const skuKey = String(sku.skuId);
+                        const skuStatus = skuStatuses[skuKey];
+                        const { systemBid, manualBid } = getSkuBidViews(skuKey, skuStatus);
+                        const isSkuHandled = skuStatus?.handled ?? false;
+                        const rowVisual = getSkuRowVisualState({
+                          hasSystemBid: !!systemBid,
+                          hasManualBid: !!manualBid,
+                          hasStockMarked: !!skuStatus?.stockMarked,
+                          isSkipped: isSkuSkipped,
+                          isReviewed: isSkuHandled,
+                        });
+                        const skuActivity = resolveSkuActivity(skuKey, skuStatus);
+                        const activityLine = formatActivityLine(skuActivity);
+
                         return (
-                          <tr key={sku.skuId} className={`bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20 ${isSkuSkipped ? 'opacity-40 grayscale-[0.5]' : ''}`}>
-                            <td className="px-2 text-center bg-secondary/[0.02] border-r border-secondary/5 border-dashed">
-                              <input 
-                                type="checkbox" 
-                                checked={isSkuSkipped} 
-                                onChange={(e) => { e.stopPropagation(); handleToggleSkip({ ...sku, parent: item }, true); }}
-                                className="w-3.5 h-3.5 cursor-pointer accent-blue-500"
+                          <tr key={sku.skuId} className={`bg-secondary/[0.04] text-[11px] h-12 border-b border-dashed border-secondary/20 ${rowVisual.rowClass} ${rowVisual.fade ? "opacity-40 grayscale-[0.5]" : ""}`}>
+                            {/* 관리 (선택 + 입찰 + 재고 + 검토 + 메모 + 스킵) */}
+                            <td className={`px-1 border-r border-secondary/5 border-dashed relative ${rowVisual.manageCellClass}`}>
+                              <SkuRowManageCell
+                                skuId={sku.skuId}
+                                checked={!!selectedSkus[sku.skuId]}
+                                onCheckedChange={() => toggleSkuSelection(sku.skuId)}
+                                systemBid={systemBid}
+                                manualBid={manualBid}
+                                onManualBidToggle={() => handleToggleSkuManualBid(skuKey, spuKey)}
+                                isSavingManualBid={!!savingManualBid[skuKey]}
+                                stockMarked={!!skuStatus?.stockMarked}
+                                stockMarkedDate={skuStatus?.stockMarkedDate}
+                                onStockToggle={() => handleToggleSkuStockMarked(skuKey, spuKey)}
+                                isSavingStock={!!savingStockMarked[skuKey]}
+                                isHandled={isSkuHandled}
+                                onHandledToggle={() => toggleSkuHandled(skuKey, spuKey, childSkuIds, item)}
+                                hasMemo={!!skuStatus?.memo}
+                                memoTitle={skuStatus?.memo ?? undefined}
+                                activityTitle={activityLine ?? undefined}
+                                onMemoClick={() =>
+                                  setSkuMemoEditor(
+                                    skuMemoEditor?.skuId === skuKey
+                                      ? null
+                                      : { skuId: skuKey, spuId: spuKey, value: skuStatus?.memo ?? "" }
+                                  )
+                                }
+                                isSkipped={isSkuSkipped}
+                                onSkipToggle={() => handleToggleSkip({ ...sku, parent: item }, true)}
+                                checkboxSize="sm"
                               />
+                              {skuMemoEditor?.skuId === skuKey && (
+                                <div className="absolute left-2 top-full mt-1 z-[70] w-64 bg-background border border-border rounded-lg shadow-xl p-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-[11px] font-bold text-foreground">옵션 메모 · {propsStr}</span>
+                                    <button onClick={() => setSkuMemoEditor(null)} className="text-muted-foreground/50 hover:text-foreground"><X size={13} /></button>
+                                  </div>
+                                  <textarea
+                                    autoFocus
+                                    value={skuMemoEditor.value}
+                                    onChange={(e) => setSkuMemoEditor({ skuId: String(sku.skuId), spuId: spuKey, value: e.target.value })}
+                                    placeholder="이 옵션에 대한 메모"
+                                    className="w-full h-20 text-[11px] p-2 bg-secondary/20 border border-border/50 rounded-md outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                                  />
+                                  <div className="flex justify-end gap-1.5 mt-1.5">
+                                    <button onClick={() => setSkuMemoEditor(null)} className="px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground rounded-md">취소</button>
+                                    <button
+                                      onClick={() => handleSaveSkuMemo(String(sku.skuId), spuKey)}
+                                      disabled={!!savingSkuMemo[String(sku.skuId)]}
+                                      className="px-2.5 py-1 text-[11px] font-bold bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-1 disabled:opacity-40"
+                                    >
+                                      {savingSkuMemo[String(sku.skuId)] ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                                      저장
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </td>
-                            <td className="border-r border-secondary/5 border-dashed"><input type="checkbox" checked={!!selectedSkus[sku.skuId]} onChange={() => toggleSkuSelection(sku.skuId)} className="w-3 h-3 mx-auto block" /></td>
-                            <td className="px-4 border-r border-secondary/5 border-dashed">
+                            <td className="px-2 border-r border-secondary/5 border-dashed">
                               <div className="flex items-center gap-3 pl-6">
                                 <div className="w-8 h-8 bg-white border border-secondary/10 rounded-md p-1 shrink-0 flex items-center justify-center shadow-xs">
                                   {sku.image ? <img src={sku.image} className="max-w-full max-h-full object-contain" /> : <ImageIcon size={14} className="opacity-5"/>}
@@ -1330,8 +2685,50 @@ export function SearchBoard() {
                                 <div className="flex flex-col min-w-0 leading-tight">
                                   <div className="flex items-center gap-2">
                                     <span className="font-bold text-foreground/70 truncate">{propsStr}</span>
+                                    {systemBid && <BidStatusIndicator bid={systemBid} variant="badge" />}
+                                    {manualBid && (
+                                      <BidStatusIndicator
+                                        bid={manualBid}
+                                        variant="badge"
+                                        removable
+                                        onClick={() => handleToggleSkuManualBid(skuKey, spuKey)}
+                                      />
+                                    )}
+                                    {skuStatus?.stockMarked && (
+                                      <StockStatusIndicator
+                                        date={skuStatus.stockMarkedDate ?? formatBidDate(new Date().toISOString())}
+                                        variant="badge"
+                                        removable
+                                        onClick={() => handleToggleSkuStockMarked(skuKey, spuKey)}
+                                      />
+                                    )}
                                     <span className="bg-emerald-500/5 text-emerald-600/60 text-[8px] px-1 py-0.5 rounded border border-emerald-500/10 font-bold shrink-0">입찰 가능</span>
                                   </div>
+                                  {systemBid && (
+                                    <span className="text-[9px] text-blue-700 font-semibold">
+                                      입찰 ₩{systemBid.price?.toLocaleString()} · {systemBid.date}
+                                    </span>
+                                  )}
+                                  {manualBid && !systemBid && (
+                                    <span className="text-[9px] text-red-700 font-semibold">
+                                      수동표기 · {manualBid.date}
+                                    </span>
+                                  )}
+                                  {skuStatus?.stockMarked && (
+                                    <span className="text-[9px] text-emerald-700 font-semibold">
+                                      재고보유 · {skuStatus.stockMarkedDate}
+                                    </span>
+                                  )}
+                                  {activityLine && (
+                                    <span className="text-[9px] text-muted-foreground/70 font-medium">
+                                      {activityLine}
+                                    </span>
+                                  )}
+                                  {skuStatus?.memo && (
+                                    <span className="text-[9px] text-amber-700/80 truncate max-w-[200px]" title={skuStatus.memo}>
+                                      {skuStatus.memo}
+                                    </span>
+                                  )}
                                   <span className="text-[9px] text-muted-foreground/40 font-mono tracking-tighter">SKUID: {sku.skuId}</span>
                                 </div>
                               </div>
@@ -1392,33 +2789,25 @@ export function SearchBoard() {
                             </td>
                             <td className="px-1 text-center border-r border-dashed bg-primary/[0.01]">
                               <div className="font-bold text-[11px] text-foreground/40">
-                                {(() => {
-                                  const skuCN = item.skuDetailsCN?.find((s: any) => s.skuId === sku.skuId);
-                                  const val = skuCN?.commoditySales?.globalSoldNum30 ?? sku.commoditySales?.globalSoldNum30;
-                                  return val !== undefined ? `${val.toLocaleString()}` : "—";
-                                })()}
+                                {formatSalesVolume(getSkuSalesValue(sku, item.skuStatsCN, "globalSoldNum30"))}
                               </div>
                             </td>
                             <td className="px-1 text-center border-r border-dashed bg-secondary/[0.01]">
                               <div className="font-bold text-[11px] text-foreground/40">
-                                {(() => {
-                                  const skuCN = item.skuDetailsCN?.find((s: any) => s.skuId === sku.skuId);
-                                  const val = skuCN?.commoditySales?.localSoldNum30 ?? sku.commoditySales?.localSoldNum30;
-                                  return val !== undefined ? `${val.toLocaleString()}` : "—";
-                                })()}
+                                {formatSalesVolume(getSkuSalesValue(sku, item.skuStatsCN, "localSoldNum30"))}
                               </div>
                             </td>
-                            <td className="px-1 text-center border-r border-dashed bg-blue-500/[0.01]">
-                              <div className="flex items-center justify-between px-2 gap-2">
+                            <td className="px-1 text-center bg-blue-500/[0.01]">
+                              <div className="flex items-center justify-center px-1 gap-1.5">
                                 {margin ? (
-                                  <div className="flex flex-col items-center leading-none gap-0.5 min-w-[50px]">
+                                  <div className="flex flex-col items-center leading-none gap-0.5 min-w-[44px]">
                                     <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? 'text-blue-600' : 'text-destructive'}`}>
                                       {margin.actualProfit > 0 ? "▲" : "▼"} ₩{Math.round(margin.actualProfit).toLocaleString()}
                                     </span>
                                     <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
                                   </div>
-                                ) : <div className="min-w-[50px] opacity-10 text-[9px] font-bold">READY</div>}
-                                
+                                ) : <div className="min-w-[44px] opacity-10 text-[9px] font-bold">READY</div>}
+
                                 <div className="flex flex-col items-center justify-center flex-1">
                                   <div className="relative group/input w-full max-w-[100px] mx-auto">
                                     <input type="text" value={bidPrice ? Number(bidPrice).toLocaleString() : ""} onChange={(e) => handleBiddingPriceChange(sku.skuId, e.target.value)} className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all" placeholder="0" />
@@ -1426,17 +2815,16 @@ export function SearchBoard() {
                                   </div>
                                   {bidPrice && <span className="text-[8px] text-muted-foreground/40 mt-0.5 font-bold uppercase tracking-tighter">NET: ₩{calculateNet(bidPrice, naverPrice ? Number(naverPrice) : undefined)?.toLocaleString()}</span>}
                                 </div>
+
+                                <button
+                                  onClick={() => handleSingleBid(sku.skuId, item.id)}
+                                  disabled={!bidPrice || isBidding}
+                                  className="px-3 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic shrink-0"
+                                >
+                                  BID
+                                </button>
                               </div>
                             </td>
-                           <td className="px-2 text-center">
-                             <button 
-                               onClick={() => handleSingleBid(sku.skuId, item.id)} 
-                               disabled={!bidPrice || isBidding} 
-                               className="px-5 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 active:scale-95 disabled:opacity-20 transition-all uppercase tracking-wider italic mx-auto block"
-                             >
-                               BID
-                             </button>
-                           </td>
                          </tr>
                         );
                       })}
@@ -1448,17 +2836,26 @@ export function SearchBoard() {
           </table>
         </div>
 
-        {/* Pagination */}
-        {searchType === "brand" && totalCount > pageSize && (
-          <div className="px-4 py-2 border-t bg-secondary/10 flex items-center justify-between text-xs">
-            <div className="text-muted-foreground">총 {totalCount.toLocaleString()}개</div>
-            <div className="flex items-center gap-1">
-              <button onClick={() => handleSearch(1)} disabled={currentPage === 1 || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronsLeft size={14} /></button>
-              <button onClick={() => handleSearch(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronLeft size={14} /></button>
-              <span className="px-3 font-bold text-primary">{currentPage} / {Math.ceil(totalCount / pageSize)}</span>
-              <button onClick={() => handleSearch(currentPage + 1)} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronRight size={14} /></button>
-              <button onClick={() => handleSearch(Math.ceil(totalCount / pageSize))} disabled={currentPage >= Math.ceil(totalCount / pageSize) || isLoading} className="p-1.5 rounded hover:bg-secondary disabled:opacity-20"><ChevronsRight size={14} /></button>
+        {/* 브랜드 '더 불러오기' (누적 탐색) */}
+        {searchType === "brand" && totalCount > 0 && items.length > 0 && (
+          <div className="px-4 py-2.5 border-t bg-secondary/10 flex items-center justify-between gap-4 text-xs">
+            <div className="text-muted-foreground">
+              총 <span className="font-bold text-foreground">{totalCount.toLocaleString()}</span>개 중{" "}
+              <span className="font-bold text-primary">{items.length.toLocaleString()}</span>개 불러옴
+              <span className="opacity-60"> ({currentPage}페이지까지)</span>
             </div>
+            {currentPage < Math.ceil(totalCount / pageSize) ? (
+              <button
+                onClick={handleLoadMore}
+                disabled={isLoading || isLoadingMore}
+                className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40`}
+              >
+                {isLoadingMore ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                더 불러오기 (다음 {pageSize}개)
+              </button>
+            ) : (
+              <span className="text-muted-foreground/70 font-medium">전체 불러옴 완료</span>
+            )}
           </div>
         )}
       </div>
@@ -1507,6 +2904,91 @@ export function SearchBoard() {
         onSuccess={(newData) => setSystemSettings(newData as SystemSettings)}
       />
 
+      {/* Duplicate Bid Confirmation Modal */}
+      {duplicateBidModal && (
+        <div className="fixed inset-0 z-[110] bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-card w-full max-w-lg rounded-2xl shadow-xl border overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="p-5 border-b bg-muted/30">
+              <div className="flex items-center gap-3 text-amber-500 mb-1">
+                <AlertCircle size={20} />
+                <h3 className="font-bold text-lg text-foreground">중복 입찰 확인</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                아래 옵션은 이미 입찰 중입니다. 계속 진행하시겠습니까?
+              </p>
+            </div>
+            <div className="p-5 space-y-3 overflow-y-auto flex-1">
+              {duplicateBidModal.conflicts.map((conflict, i) => {
+                const samePrice = conflict.existing.bidPrice === conflict.payload.price;
+                return (
+                  <div key={i} className="rounded-lg border border-secondary/30 bg-secondary/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-foreground truncate">
+                        {conflict.sizeInfo || conflict.existing.sizeInfo || `SKU ${conflict.payload.skuId}`}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                        SKUID: {conflict.payload.skuId}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-background rounded-md p-2 border border-secondary/20">
+                        <p className="text-muted-foreground font-semibold mb-0.5">기존 입찰</p>
+                        <p className="font-bold">₩{conflict.existing.bidPrice.toLocaleString()}</p>
+                        <p className="text-muted-foreground">{conflict.existing.bidDate}</p>
+                        {conflict.existing.quantity != null && (
+                          <p className="text-muted-foreground">수량: {conflict.existing.quantity}</p>
+                        )}
+                      </div>
+                      <div className="bg-background rounded-md p-2 border border-primary/20">
+                        <p className="text-muted-foreground font-semibold mb-0.5">요청 입찰</p>
+                        <p className="font-bold text-primary">₩{conflict.payload.price.toLocaleString()}</p>
+                        {samePrice && (
+                          <p className="text-amber-600 text-[10px] font-semibold mt-1">동일 가격</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {duplicateBidModal.conflicts.every(
+                (c) => c.existing.bidPrice === c.payload.price
+              ) && (
+                <p className="text-[11px] text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-md p-2.5">
+                  동일 옵션·동일 가격은 실데이터에서 중복 입찰이 거부됩니다. 입찰 관리에서 수량을 변경하거나 가격을 수정해 주세요.
+                </p>
+              )}
+            </div>
+            <div className="p-4 border-t flex flex-col sm:flex-row justify-end gap-2">
+              <button
+                onClick={() => setDuplicateBidModal(null)}
+                className="px-4 py-2 text-sm font-bold text-muted-foreground hover:text-foreground"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => handleDuplicateConfirm("forceRetry")}
+                disabled={isBidding}
+                className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-bold hover:bg-secondary/80 disabled:opacity-40"
+              >
+                그대로 입찰 시도
+              </button>
+              <button
+                onClick={() => handleDuplicateConfirm("updatePrice")}
+                disabled={
+                  isBidding ||
+                  duplicateBidModal.conflicts.every(
+                    (c) => c.existing.bidPrice === c.payload.price
+                  )
+                }
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-bold hover:bg-primary/90 disabled:opacity-40"
+              >
+                가격 변경 재입찰
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Exclude Article Modal */}
       {isExcludeModalOpen && itemToExclude && (
         <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1540,6 +3022,19 @@ export function SearchBoard() {
                 영구 제외하기
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 비차단 인라인 피드백 토스트 (alert 대체) */}
+      {feedback && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="flex items-center gap-2 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xl border border-white/10 max-w-[90vw]">
+            <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+            <span className="truncate">{feedback}</span>
+            <button onClick={() => setFeedback(null)} className="ml-1 opacity-50 hover:opacity-100 transition-opacity shrink-0">
+              <X size={13} />
+            </button>
           </div>
         </div>
       )}

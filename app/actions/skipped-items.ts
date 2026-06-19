@@ -21,7 +21,7 @@ export async function getSkippedItems() {
 
     const { data, error } = await supabase
       .from("skipped_items")
-      .select("sku_id, spu_id, article_number")
+      .select("sku_id, spu_id, article_number, skipped_at")
       .eq("user_id", user.id);
 
     if (error) throw error;

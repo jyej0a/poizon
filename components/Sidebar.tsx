@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import { 
   BarChart3, 
@@ -16,6 +17,10 @@ import {
 
 export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const pathname = usePathname();
+
+  const isActive = (href: string) =>
+    href === "/dashboard" ? pathname === href : pathname.startsWith(href);
 
   return (
     <aside className={`border-r bg-card/50 backdrop-blur-xl hidden md:flex flex-col h-full shrink-0 transition-all duration-300 ${isCollapsed ? "w-20" : "w-64"}`}>
@@ -44,11 +49,11 @@ export function Sidebar() {
               Main Menu
             </p>
           )}
-          <NavItem href="/dashboard" icon={<BarChart3 size={18} />} label="Dashboard" isCollapsed={isCollapsed} />
-          <NavItem href="/dashboard/items" icon={<Search size={18} />} label="Item Search" isCollapsed={isCollapsed} />
-          <NavItem href="/dashboard/listings" icon={<Gavel size={18} />} label="입찰 관리" isCollapsed={isCollapsed} />
-          <NavItem href="/dashboard/orders" icon={<ListOrdered size={18} />} label="Orders" isCollapsed={isCollapsed} />
-          <NavItem href="/dashboard/excluded" icon={<Ban size={18} />} label="제외 목록" isCollapsed={isCollapsed} />
+          <NavItem href="/dashboard" icon={<BarChart3 size={18} />} label="Dashboard" isCollapsed={isCollapsed} isActive={isActive("/dashboard")} />
+          <NavItem href="/dashboard/items" icon={<Search size={18} />} label="Item Search" isCollapsed={isCollapsed} comingSoon />
+          <NavItem href="/dashboard/listings" icon={<Gavel size={18} />} label="입찰 관리" isCollapsed={isCollapsed} isActive={isActive("/dashboard/listings")} />
+          <NavItem href="/dashboard/orders" icon={<ListOrdered size={18} />} label="Orders" isCollapsed={isCollapsed} comingSoon />
+          <NavItem href="/dashboard/excluded" icon={<Ban size={18} />} label="제외 목록" isCollapsed={isCollapsed} isActive={isActive("/dashboard/excluded")} />
         </div>
 
         <div className="px-3 mt-8 space-y-1">
@@ -57,7 +62,7 @@ export function Sidebar() {
               System
             </p>
           )}
-          <NavItem href="/dashboard/settings" icon={<Settings size={18} />} label="Settings" isCollapsed={isCollapsed} />
+          <NavItem href="/dashboard/settings" icon={<Settings size={18} />} label="Settings" isCollapsed={isCollapsed} isActive={isActive("/dashboard/settings")} />
         </div>
       </div>
 
@@ -77,14 +82,53 @@ export function Sidebar() {
   );
 }
 
-function NavItem({ href, icon, label, isCollapsed }: { href: string; icon: React.ReactNode; label: string; isCollapsed: boolean }) {
+function NavItem({
+  href,
+  icon,
+  label,
+  isCollapsed,
+  isActive = false,
+  comingSoon = false,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  isCollapsed: boolean;
+  isActive?: boolean;
+  comingSoon?: boolean;
+}) {
+  if (comingSoon) {
+    return (
+      <div
+        aria-disabled
+        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground/40 cursor-not-allowed select-none ${isCollapsed ? "justify-center px-0" : "px-2"}`}
+        title={`${label} (준비 중)`}
+      >
+        <span className="shrink-0">{icon}</span>
+        {!isCollapsed && (
+          <span className="flex flex-1 items-center justify-between whitespace-nowrap">
+            {label}
+            <span className="text-[10px] font-semibold uppercase tracking-wide rounded-full bg-secondary/60 px-1.5 py-0.5 text-muted-foreground/60">
+              준비 중
+            </span>
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <Link 
-      href={href} 
-      className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-all duration-200 group ${isCollapsed ? "justify-center px-0" : "px-2"}`}
+    <Link
+      href={href}
+      aria-current={isActive ? "page" : undefined}
+      className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${isCollapsed ? "justify-center px-0" : "px-2"} ${
+        isActive
+          ? "bg-primary/10 text-primary"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+      }`}
       title={isCollapsed ? label : undefined}
     >
-      <span className="text-muted-foreground group-hover:text-primary transition-colors shrink-0">
+      <span className={`shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`}>
         {icon}
       </span>
       {!isCollapsed && <span className="whitespace-nowrap">{label}</span>}
