@@ -102,16 +102,32 @@ export class PoizonClient {
     payload.sign = this.generateSignature(payload);
 
     const url = `${this.baseUrl}${endpoint}`;
+    const reqStartedAt = Date.now();
+    // #region agent log
+    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:start',message:'poizon api fetch start',data:{endpoint},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     // 모든 데이터를 POST JSON Body로 전송
-    const response = await fetch(url, {
+    let response: Response;
+    try {
+      response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(25_000),
     });
+    } catch (fetchErr: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:fetchError',message:'poizon api fetch failed',data:{endpoint,error:fetchErr?.message,elapsedMs:Date.now()-reqStartedAt},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      throw fetchErr;
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:response',message:'poizon api fetch ok',data:{endpoint,status:response.status,elapsedMs:Date.now()-reqStartedAt},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     if (!response.ok) {
       const errorText = await response.text();

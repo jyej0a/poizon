@@ -1,8 +1,6 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
-import { getServiceRoleClient } from "@/lib/supabase/service-role";
-import { PoizonClient } from "@/lib/api/poizon";
+import { getPoizonClient } from "@/app/actions/poizon";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
 
 /**
@@ -12,29 +10,15 @@ import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
  * @param currency 통화 단위 (기본: "KRW")
  */
 export async function getSkuRecommendations(skuId: string | number, region = "KR", currency = "KRW") {
+  const startedAt = Date.now();
+  // #region agent log
+  fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'recommendations.ts:getSkuRecommendations:entry',message:'server action started',data:{skuId:String(skuId),region,currency},timestamp:Date.now(),hypothesisId:'A,B'})}).catch(()=>{});
+  // #endregion
   try {
-    const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
-
-    const supabase = getServiceRoleClient();
-    const { data: user } = await supabase.from("users").select("id").eq("clerk_id", userId).single();
-    if (!user) throw new Error("User lookup failed.");
-
-    const { data: configData } = await supabase
-      .from("user_configs")
-      .select("poizon_app_key, poizon_app_secret, poizon_access_token")
-      .eq("user_id", user.id)
-      .single();
-
-    if (!configData?.poizon_app_key || !configData?.poizon_app_secret) {
-      throw new Error("Poizon App Key/Secret is missing.");
-    }
-
-    const client = new PoizonClient({
-      appKey: configData.poizon_app_key,
-      appSecret: configData.poizon_app_secret,
-      ...(configData.poizon_access_token ? { accessToken: configData.poizon_access_token } : {})
-    });
+    const client = await getPoizonClient();
+    // #region agent log
+    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'recommendations.ts:getSkuRecommendations:afterClient',message:'getPoizonClient ok',data:{skuId:String(skuId),elapsedMs:Date.now()-startedAt},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 
     const payload = {
       skuId: Number(skuId),
@@ -47,13 +31,22 @@ export async function getSkuRecommendations(skuId: string | number, region = "KR
     const response = await client.request<any>(POIZON_CONSTANTS.ENDPOINTS.RECOMMEND_PRICE, payload);
 
     if (response && response.code === 200) {
+      // #region agent log
+      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'recommendations.ts:getSkuRecommendations:success',message:'server action success',data:{skuId:String(skuId),elapsedMs:Date.now()-startedAt},timestamp:Date.now(),hypothesisId:'A,B'})}).catch(()=>{});
+      // #endregion
       return { success: true, data: response.data };
     } else {
       console.warn(`[getSkuRecommendations Warn] SKU: ${skuId}`, response);
+      // #region agent log
+      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'recommendations.ts:getSkuRecommendations:businessFail',message:'poizon business error',data:{skuId:String(skuId),code:response?.code,msg:response?.msg,elapsedMs:Date.now()-startedAt},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       return { success: false, error: response?.msg || "추천 정보를 불러오지 못했습니다." };
     }
   } catch (error: any) {
     console.error(`[getSkuRecommendations Error] SKU: ${skuId}`, error);
+    // #region agent log
+    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'recommendations.ts:getSkuRecommendations:catch',message:'server action error',data:{skuId:String(skuId),error:error?.message,elapsedMs:Date.now()-startedAt},timestamp:Date.now(),hypothesisId:'A,C'})}).catch(()=>{});
+    // #endregion
     return { success: false, error: error.message };
   }
 }

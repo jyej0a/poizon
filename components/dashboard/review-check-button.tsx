@@ -34,7 +34,10 @@ export function ReviewCheckButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       title={title}
       className={`p-1 rounded-full transition-all ${STATE_STYLES[state]}`}
     >
