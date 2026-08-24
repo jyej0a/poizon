@@ -1,8 +1,10 @@
+import { elandMallProvider } from "@/lib/sourcing/providers/elandmall";
 import { gmarketProvider } from "@/lib/sourcing/providers/gmarket";
 import { kolonMallProvider } from "@/lib/sourcing/providers/kolonmall";
 import { lotteImallProvider } from "@/lib/sourcing/providers/lotteimall";
 import { lotteDepartmentProvider, lotteOnProvider } from "@/lib/sourcing/providers/lotteon";
 import { musinsaProvider } from "@/lib/sourcing/providers/musinsa";
+import { nikeKrProvider } from "@/lib/sourcing/providers/nike";
 import { ssgProvider } from "@/lib/sourcing/providers/ssg";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 import type { SourceMallReliability } from "@/types/source-mall";
@@ -54,6 +56,18 @@ export const SOURCE_MALL_DEFINITIONS: SourceMallDefinition[] = [
     homepage: "https://www.ssg.com",
     reliability: "ok",
     notes: null,
+  },
+  {
+    provider: nikeKrProvider,
+    homepage: "https://www.nike.com/kr",
+    reliability: "ok",
+    notes: "공식몰 Wall SSR(__NEXT_DATA__). 나이키 품번에 강함",
+  },
+  {
+    provider: elandMallProvider,
+    homepage: "https://www.elandmall.com",
+    reliability: "ok",
+    notes: "검색 HTML 상품 카드 파싱",
   },
   {
     provider: gmarketProvider,

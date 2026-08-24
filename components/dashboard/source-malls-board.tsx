@@ -6,7 +6,10 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
+  HelpCircle,
   Loader2,
   RefreshCw,
   Search,
@@ -31,12 +34,31 @@ import {
 } from "@/types/source-mall";
 
 const DEFAULT_PROBE_ARTICLE = "TLTCM26521";
+const STALE_MS = 24 * 60 * 60 * 1000;
 
-type FilterTab = "all" | "active" | "inactive";
+type ActiveFilter = "all" | "active" | "inactive";
+type StatusFilter = "all" | "ok" | "empty" | "failed" | "unchecked";
 
-function CheckBadge({ status }: { status: SourceMallCheckStatus | null }) {
+function isStale(checkedAt: string | null): boolean {
+  if (!checkedAt) return false;
+  const ts = Date.parse(checkedAt);
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts > STALE_MS;
+}
+
+function CheckBadge({
+  status,
+  offerCount,
+}: {
+  status: SourceMallCheckStatus | null;
+  offerCount?: number | null;
+}) {
   if (!status) {
-    return <span className="text-xs text-muted-foreground/50">—</span>;
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-secondary text-muted-foreground">
+        미점검
+      </span>
+    );
   }
 
   const styles: Record<SourceMallCheckStatus, string> = {
@@ -54,8 +76,26 @@ function CheckBadge({ status }: { status: SourceMallCheckStatus | null }) {
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${styles[status]}`}>
       {icons[status]}
       {SOURCE_MALL_CHECK_LABEL[status]}
+      {status === "ok" && typeof offerCount === "number" ? ` · ${offerCount}건` : null}
     </span>
   );
+}
+
+function applyProbeToMall(
+  mall: SourceMallView,
+  probe: {
+    status: SourceMallCheckStatus;
+    message: string;
+    offerCount: number;
+  }
+): SourceMallView {
+  return {
+    ...mall,
+    last_checked_at: new Date().toISOString(),
+    last_check_status: probe.status,
+    last_check_message: probe.message,
+    last_check_offer_count: probe.offerCount,
+  };
 }
 
 export function SourceMallsBoard() {
@@ -63,12 +103,15 @@ export function SourceMallsBoard() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filter, setFilter] = useState<FilterTab>("all");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [probeArticle, setProbeArticle] = useState(DEFAULT_PROBE_ARTICLE);
   const [probingKeys, setProbingKeys] = useState<Set<string>>(new Set());
   const [isProbingAll, setIsProbingAll] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [showAddGuide, setShowAddGuide] = useState(false);
+  const [lastProbeNote, setLastProbeNote] = useState<string | null>(null);
 
   const fetchMalls = async () => {
     setIsLoading(true);
@@ -91,11 +134,31 @@ export function SourceMallsBoard() {
     void fetchMalls();
   }, []);
 
+  const statusCounts = useMemo(() => {
+    const counts = { ok: 0, empty: 0, failed: 0, unchecked: 0, stale: 0 };
+    for (const mall of malls) {
+      if (!mall.last_check_status) counts.unchecked += 1;
+      else counts[mall.last_check_status] += 1;
+      if (isStale(mall.last_checked_at)) counts.stale += 1;
+    }
+    return counts;
+  }, [malls]);
+
   const filteredMalls = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return malls.filter((mall) => {
-      if (filter === "active" && !mall.is_active) return false;
-      if (filter === "inactive" && mall.is_active) return false;
+      if (activeFilter === "active" && !mall.is_active) return false;
+      if (activeFilter === "inactive" && mall.is_active) return false;
+
+      if (statusFilter === "unchecked" && mall.last_check_status) return false;
+      if (
+        statusFilter !== "all" &&
+        statusFilter !== "unchecked" &&
+        mall.last_check_status !== statusFilter
+      ) {
+        return false;
+      }
+
       if (!query) return true;
       return (
         mall.label.toLowerCase().includes(query) ||
@@ -103,7 +166,7 @@ export function SourceMallsBoard() {
         (mall.notes ?? "").toLowerCase().includes(query)
       );
     });
-  }, [malls, filter, searchQuery]);
+  }, [malls, activeFilter, statusFilter, searchQuery]);
 
   const activeCount = malls.filter((mall) => mall.is_active).length;
   const limitedCount = malls.filter((mall) => mall.reliability === "limited").length;
@@ -117,11 +180,6 @@ export function SourceMallsBoard() {
       }
       return next;
     });
-  };
-
-  const applyProbeResults = async () => {
-    const res = await listSourceMalls();
-    if (res.success && res.data) setMalls(res.data);
   };
 
   const handleToggle = async (mall: SourceMallView) => {
@@ -161,11 +219,16 @@ export function SourceMallsBoard() {
     withProbing([key], true);
     try {
       const res = await checkSourceMall(key, article);
-      if (!res.success) {
+      if (!res.success || !res.data) {
         alert(res.error ?? "점검에 실패했습니다.");
         return;
       }
-      await applyProbeResults();
+      setMalls((prev) =>
+        prev.map((mall) => (mall.key === key ? applyProbeToMall(mall, res.data!) : mall))
+      );
+      setLastProbeNote(
+        `${key}: ${SOURCE_MALL_CHECK_LABEL[res.data.status]} · ${res.data.message} (${res.data.elapsedMs}ms)`
+      );
     } finally {
       withProbing([key], false);
     }
@@ -184,11 +247,23 @@ export function SourceMallsBoard() {
     withProbing(keys, true);
     try {
       const res = await checkAllSourceMalls(article, keys);
-      if (!res.success) {
+      if (!res.success || !res.data) {
         alert(res.error ?? "전체 점검에 실패했습니다.");
         return;
       }
-      await applyProbeResults();
+      const byKey = new Map(res.data.map((item) => [item.key, item]));
+      setMalls((prev) =>
+        prev.map((mall) => {
+          const probe = byKey.get(mall.key);
+          return probe ? applyProbeToMall(mall, probe) : mall;
+        })
+      );
+      const ok = res.data.filter((item) => item.status === "ok").length;
+      const empty = res.data.filter((item) => item.status === "empty").length;
+      const failed = res.data.filter((item) => item.status === "failed").length;
+      setLastProbeNote(
+        `전체 점검 완료 — 오퍼 있음 ${ok} · 없음 ${empty} · 실패 ${failed} (품번 ${article})`
+      );
     } finally {
       withProbing(keys, false);
       setIsProbingAll(false);
@@ -212,6 +287,14 @@ export function SourceMallsBoard() {
     }
   };
 
+  const statusFilterButtons: { id: StatusFilter; label: string; count: number }[] = [
+    { id: "all", label: "전체", count: malls.length },
+    { id: "ok", label: "오퍼 있음", count: statusCounts.ok },
+    { id: "empty", label: "오퍼 없음", count: statusCounts.empty },
+    { id: "failed", label: "실패", count: statusCounts.failed },
+    { id: "unchecked", label: "미점검", count: statusCounts.unchecked },
+  ];
+
   return (
     <div className="h-full flex flex-col gap-4 p-2 w-full animate-in fade-in duration-300">
       <div className="bg-card border border-secondary/40 rounded-xl p-5 shadow-sm flex flex-col gap-4">
@@ -223,7 +306,7 @@ export function SourceMallsBoard() {
             <div>
               <h2 className="text-lg font-black tracking-tight text-foreground">수집 몰</h2>
               <p className="text-sm text-muted-foreground">
-                원가 오퍼를 가져올 쇼핑몰을 켜고 끌 수 있습니다. 새 몰은 파서를 추가한 뒤 이 목록에 나타납니다.
+                원가 오퍼 수집 대상을 켜고, 품번 점검으로 정상 수집 여부를 확인합니다.
               </p>
             </div>
           </div>
@@ -237,6 +320,11 @@ export function SourceMallsBoard() {
                 제한적 {limitedCount}
               </span>
             )}
+            {statusCounts.stale > 0 && (
+              <span className="inline-flex items-center text-xs font-bold text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
+                24h+ 경과 {statusCounts.stale}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => void fetchMalls()}
@@ -246,6 +334,30 @@ export function SourceMallsBoard() {
               새로고침
             </button>
           </div>
+        </div>
+
+        {/* 수집 상태 요약 — 클릭 시 필터 */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {statusFilterButtons.map((item) => {
+            const active = statusFilter === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setStatusFilter(item.id)}
+                className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                  active
+                    ? "border-primary/40 bg-primary/5"
+                    : "border-border/50 bg-secondary/10 hover:bg-secondary/30"
+                }`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {item.label}
+                </div>
+                <div className="text-lg font-black tabular-nums text-foreground">{item.count}</div>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
@@ -271,9 +383,9 @@ export function SourceMallsBoard() {
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setFilter(value)}
+                  onClick={() => setActiveFilter(value)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-                    filter === value ? "bg-background shadow-sm text-primary" : "text-muted-foreground"
+                    activeFilter === value ? "bg-background shadow-sm text-primary" : "text-muted-foreground"
                   }`}
                 >
                   {label}
@@ -312,9 +424,48 @@ export function SourceMallsBoard() {
           </div>
         </div>
 
+        {lastProbeNote && (
+          <p className="text-[11px] font-medium text-foreground bg-secondary/30 rounded-lg px-3 py-2">
+            {lastProbeNote}
+          </p>
+        )}
+
         <p className="text-[11px] text-muted-foreground">
           몰을 켜거나 끈 뒤에는 기존 원가 캐시(1시간)에 바로 반영되지 않을 수 있습니다. 즉시 반영하려면 캐시를 비우세요.
+          점검 품번은 해당 몰에서 실제로 팔리는 모델 코드를 쓰는 것이 좋습니다.
         </p>
+
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAddGuide((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs font-bold bg-secondary/20 hover:bg-secondary/40 transition-colors"
+          >
+            <HelpCircle size={14} className="text-primary shrink-0" />
+            <span className="flex-1">새 수집 몰을 추가하려면?</span>
+            {showAddGuide ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+          {showAddGuide && (
+            <ol className="px-4 py-3 text-xs text-muted-foreground space-y-1.5 list-decimal list-inside bg-background/50">
+              <li>
+                <code className="text-[11px] bg-secondary/40 px-1 rounded">lib/sourcing/providers/&#123;key&#125;.ts</code>
+                에 <code className="text-[11px] bg-secondary/40 px-1 rounded">SourceOfferProvider</code> 구현
+                (<code className="text-[11px]">key</code>, <code className="text-[11px]">label</code>,{" "}
+                <code className="text-[11px]">fetchOffers</code>)
+              </li>
+              <li>
+                <code className="text-[11px] bg-secondary/40 px-1 rounded">lib/sourcing/registry.ts</code>의{" "}
+                <code className="text-[11px]">SOURCE_MALL_DEFINITIONS</code>에 등록 (homepage · reliability · notes)
+              </li>
+              <li>
+                배포 후 이 화면을 열면 DB 행이 자동 보강됩니다. UI만으로 몰을 추가할 수는 없습니다.
+              </li>
+              <li>
+                점검 품번으로 「연결 점검」→ <strong className="text-foreground">오퍼 있음</strong> 확인 후 활성 유지
+              </li>
+            </ol>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -342,9 +493,9 @@ export function SourceMallsBoard() {
                 <tr>
                   <th className="px-4 py-4 font-bold tracking-wider w-16 text-center">순서</th>
                   <th className="px-4 py-4 font-bold tracking-wider">몰</th>
-                  <th className="px-4 py-4 font-bold tracking-wider text-center">수집</th>
+                  <th className="px-4 py-4 font-bold tracking-wider text-center">수집 ON</th>
                   <th className="px-4 py-4 font-bold tracking-wider">품질</th>
-                  <th className="px-4 py-4 font-bold tracking-wider">최근 점검</th>
+                  <th className="px-4 py-4 font-bold tracking-wider">수집 상태</th>
                   <th className="px-4 py-4 font-bold tracking-wider">비고</th>
                   <th className="px-4 py-4 font-bold tracking-wider text-center">관리</th>
                 </tr>
@@ -353,6 +504,7 @@ export function SourceMallsBoard() {
                 {filteredMalls.map((mall, index) => {
                   const isProbing = probingKeys.has(mall.key);
                   const isBusy = busyKey === mall.key;
+                  const stale = isStale(mall.last_checked_at);
                   return (
                     <tr
                       key={mall.key}
@@ -363,7 +515,13 @@ export function SourceMallsBoard() {
                           <button
                             type="button"
                             aria-label={`${mall.label} 위로`}
-                            disabled={index === 0 || isBusy || filter !== "all" || Boolean(searchQuery.trim())}
+                            disabled={
+                              index === 0 ||
+                              isBusy ||
+                              activeFilter !== "all" ||
+                              statusFilter !== "all" ||
+                              Boolean(searchQuery.trim())
+                            }
                             onClick={() => void handleMove(mall.key, "up")}
                             className="p-1 rounded-md text-muted-foreground hover:bg-secondary disabled:opacity-20 disabled:hover:bg-transparent"
                           >
@@ -375,7 +533,8 @@ export function SourceMallsBoard() {
                             disabled={
                               index === filteredMalls.length - 1 ||
                               isBusy ||
-                              filter !== "all" ||
+                              activeFilter !== "all" ||
+                              statusFilter !== "all" ||
                               Boolean(searchQuery.trim())
                             }
                             onClick={() => void handleMove(mall.key, "down")}
@@ -436,12 +595,22 @@ export function SourceMallsBoard() {
                         )}
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex flex-col gap-1 min-w-[160px]">
-                          <CheckBadge status={mall.last_check_status} />
-                          <span className="text-[11px] text-muted-foreground">
-                            {mall.last_check_message || formatDateTime(mall.last_checked_at)}
+                        <div className="flex flex-col gap-1 min-w-[180px]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <CheckBadge
+                              status={mall.last_check_status}
+                              offerCount={mall.last_check_offer_count}
+                            />
+                            {stale && (
+                              <span className="text-[10px] font-semibold text-muted-foreground/80">
+                                오래됨
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground break-words">
+                            {mall.last_check_message || "아직 점검하지 않았습니다."}
                           </span>
-                          {mall.last_checked_at && mall.last_check_message && (
+                          {mall.last_checked_at && (
                             <span className="text-[10px] text-muted-foreground/70">
                               {formatDateTime(mall.last_checked_at)}
                             </span>

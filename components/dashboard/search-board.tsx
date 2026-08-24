@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { 
   Search, Loader2, Gavel, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, RotateCcw, X,
   Trash2, Ban, Copy, Check, Clock, ArrowUp, ArrowDown, ChevronsUpDown,
-  Plus, StickyNote, Save, EyeOff, Eye, Inbox
+  Plus, StickyNote, Save, EyeOff, Eye, Inbox, MoreHorizontal
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
@@ -40,9 +40,15 @@ import { getBestSourceOffer, getBestSourceOfferPrice } from "@/lib/sourcing/sour
 import { MarginSettingsDialog } from "./margin-settings-dialog";
 import { BidStatusIndicator, SpuBidSummary, type BidDisplaySource, type BidStatusInfo } from "./bid-status-indicator";
 import { SkuRowManageCell } from "./sku-row-manage-cell";
+import { SpuRowManageCell } from "./spu-row-manage-cell";
 import { StockStatusIndicator } from "./stock-status-indicator";
 import { ReviewCheckButton, type ReviewCheckState } from "./review-check-button";
-import { DashboardViewTabs } from "./dashboard-view-tabs";
+import {
+  DashboardViewTabs,
+  DisplayFilterSelect,
+  type DisplayFilter,
+  type WorkspaceView,
+} from "./dashboard-view-tabs";
 import { SourceOfferPriceCell } from "./source-offer-price-cell";
 import { SourceOfferResultsDialog } from "./source-offer-results-dialog";
 
@@ -105,7 +111,7 @@ const DEFAULT_COLUMN_WIDTHS: { [key: string]: number } = {
   salesChina: 90,
   salesLocal: 90,
   bid: 200,
-  manage: 156,
+  manage: 176,
   skip: 60,
 };
 
@@ -423,14 +429,18 @@ export function SearchBoard() {
   const [resizing, setResizing] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [bidHistoryBySku, setBidHistoryBySku] = useState<Record<string, BidStatusInfo>>({});
-  const [showOnlyProfitable, setShowOnlyProfitable] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("hierarchy");
+  const [displayFilter, setDisplayFilter] = useState<DisplayFilter>("all");
   const [selectedCategory, setSelectedCategory] = useState("전체");
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const [excludeSkippedOnSearch, setExcludeSkippedOnSearch] = useState(() =>
     readSearchExcludePref(SEARCH_EXCLUDE_SKIPPED_KEY, true)
   );
   const [excludeReviewedOnSearch, setExcludeReviewedOnSearch] = useState(() =>
     readSearchExcludePref(SEARCH_EXCLUDE_REVIEWED_KEY, true)
   );
+  const isFlatView = workspaceView !== "hierarchy";
+  const isProfitableView = workspaceView === "profitable";
 
   interface DuplicateBidConflict {
     payload: BidPayload;
@@ -443,7 +453,6 @@ export function SearchBoard() {
 
   // 품번(SPU) 처리 상태/메모 (영구 저장)
   const [itemStatuses, setItemStatuses] = useState<Record<string, ItemStatus>>({});
-  const [showOnlyUnprocessed, setShowOnlyUnprocessed] = useState(false);
   const [memoEditor, setMemoEditor] = useState<{ spuId: string; value: string } | null>(null);
   const [skuStatuses, setSkuStatuses] = useState<Record<string, SkuStatus>>({});
   const [skuMemoEditor, setSkuMemoEditor] = useState<{ skuId: string; spuId?: string; value: string } | null>(null);
@@ -695,8 +704,8 @@ export function SearchBoard() {
   }, [items, fetchAllItemAndSkuStatuses]);
 
   const toggleRow = (id: string, skus?: any[]) => {
-    // 알짜배기 목록(Flattened) 모드에서는 아코디언이 필요 없사옵니다.
-    if (showOnlyProfitable) return;
+    // Flat 뷰에서는 아코디언이 필요 없음
+    if (isFlatView) return;
 
     const rowKey = String(id);
     if (rowToggleSuppressRef.current === rowKey) return;
@@ -931,29 +940,27 @@ export function SearchBoard() {
     return margin ? margin.actualProfit : null;
   };
 
-  // 알짜배기 목록(Flattened View)을 위한 계산 로직
+  // Flat 뷰(옵션 / 수익 옵션)용 행 계산
   const flattenedRows = React.useMemo(() => {
-    if (!showOnlyProfitable) return [];
-    
+    if (!isFlatView) return [];
+
     const rows: any[] = [];
     items.forEach(item => {
       const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
       const skus = item.skuDetails || [];
-      
+
       skus.forEach(sku => {
         const skuPriceRaw = sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price ?? "0";
         const skuPriceNum = Number(String(skuPriceRaw).replace(/[^0-9]/g, ""));
-        
+
         let profit = -999999;
         if (naverPrice && skuPriceNum > 0 && systemSettings) {
           const { fee } = calculateMargin(skuPriceNum, systemSettings);
           profit = skuPriceNum - fee - Number(naverPrice);
         }
 
-        // 필터 로직: 
-        // 1. 원가 오퍼 로딩 중이면 일단 노출 (아무것도 안 뜨면 안 되기에)
-        // 2. 가격이 있는데 수익이 0 이하이면 제외
-        if (naverPrice && profit <= 0) return;
+        // 수익 옵션: 원가 로딩 전이면 노출, 가격 확정 후 수익 ≤0이면 제외
+        if (isProfitableView && naverPrice && profit <= 0) return;
 
         rows.push({
           ...sku,
@@ -965,7 +972,7 @@ export function SearchBoard() {
       });
     });
     return rows;
-  }, [items, sourceOffers, showOnlyProfitable, systemSettings]);
+  }, [items, sourceOffers, isFlatView, isProfitableView, systemSettings]);
 
   // --- 카테고리 목록 추출 ---
   const categories = React.useMemo(() => {
@@ -1036,37 +1043,49 @@ export function SearchBoard() {
     return { bidCount: systemCount + manualCount, systemCount, manualCount, totalCount: childSkuIds.length, bids };
   }, [bidHistoryBySku, skuStatuses, getSkuBidViews]);
 
+  const passesDisplayFilter = React.useCallback((opts: {
+    item: any;
+    skuId?: string;
+  }) => {
+    const { item, skuId } = opts;
+    if (displayFilter === "all") return true;
+
+    if (displayFilter === "unprocessed") {
+      return !isItemProcessed(item);
+    }
+
+    if (displayFilter === "hideReviewed") {
+      if (skuId) {
+        const spuKey = String(item.id).replace(/[^0-9]/g, "");
+        if (itemStatuses[spuKey]?.handled || skuStatuses[skuId]?.handled) return false;
+        return true;
+      }
+      return !isItemProcessed(item);
+    }
+
+    if (displayFilter === "hideSkipped") {
+      if (skuId) return !skippedSkuIds.has(skuId);
+      return !isSpuFullySkipped(item, skippedSkuIds);
+    }
+
+    return true;
+  }, [displayFilter, isItemProcessed, itemStatuses, skuStatuses, skippedSkuIds]);
+
   const filteredItems = React.useMemo(() => {
     return items.filter(item => {
       const categoryMatch = selectedCategory === "전체" || item.category === selectedCategory;
       if (!categoryMatch) return false;
-
-      // '미처리 상품만 보기': 검토완료된 품번만 숨김
-      if (showOnlyUnprocessed && isItemProcessed(item)) return false;
-
-      if (showOnlyProfitable) {
-        // 기존 수익 상품 필터 로직
-        const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
-        const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
-        if (naverPrice && !isNaN(poizonPriceNum) && poizonPriceNum > 0 && systemSettings) {
-          const { fee } = calculateMargin(poizonPriceNum, systemSettings);
-          const profit = poizonPriceNum - fee - Number(naverPrice);
-          return profit > 0;
-        }
-        return false;
-      }
-      return true;
+      return passesDisplayFilter({ item });
     });
-  }, [items, selectedCategory, showOnlyProfitable, showOnlyUnprocessed, isItemProcessed, sourceOffers, systemSettings]);
+  }, [items, selectedCategory, passesDisplayFilter]);
 
   const filteredFlattenedRows = React.useMemo(() => {
     return flattenedRows.filter(row => {
       const categoryMatch = selectedCategory === "전체" || row.parent.category === selectedCategory;
       if (!categoryMatch) return false;
-      if (showOnlyUnprocessed && isItemProcessed(row.parent)) return false;
-      return true;
+      return passesDisplayFilter({ item: row.parent, skuId: resolveSkuId(row) });
     });
-  }, [flattenedRows, selectedCategory, showOnlyUnprocessed, isItemProcessed]);
+  }, [flattenedRows, selectedCategory, passesDisplayFilter]);
 
   // --- 정렬 적용 (요청: 사용자 중심 정렬) ---
   const sortedItems = React.useMemo(() => {
@@ -1085,7 +1104,7 @@ export function SearchBoard() {
 
   React.useEffect(() => {
     const idsToFetch: string[] = [];
-    if (showOnlyProfitable) {
+    if (isFlatView) {
       sortedFlattenedRows.forEach((row) => {
         const id = resolveSkuId(row);
         if (id) idsToFetch.push(id);
@@ -1097,7 +1116,7 @@ export function SearchBoard() {
       });
     }
     idsToFetch.forEach((id) => queueRecommendationFetch(id));
-  }, [showOnlyProfitable, sortedFlattenedRows, items, expandedRows, queueRecommendationFetch]);
+  }, [isFlatView, sortedFlattenedRows, items, expandedRows, queueRecommendationFetch]);
 
   const collapseItemRow = React.useCallback((itemId: string | number) => {
     const rowKey = String(itemId);
@@ -1132,11 +1151,11 @@ export function SearchBoard() {
 
   // --- 전체 선택(select-all)용 현재 화면의 SKU ID 목록 ---
   const visibleSkuIds = React.useMemo(() => {
-    if (showOnlyProfitable) {
+    if (isFlatView) {
       return sortedFlattenedRows.map((row) => String(row.skuId)).filter(Boolean);
     }
     return sortedItems.flatMap((item) => getChildSkuIds(item));
-  }, [showOnlyProfitable, sortedFlattenedRows, sortedItems]);
+  }, [isFlatView, sortedFlattenedRows, sortedItems]);
 
   const selectedVisibleCount = visibleSkuIds.filter((id) => selectedSkus[id]).length;
   const allVisibleSelected = visibleSkuIds.length > 0 && selectedVisibleCount === visibleSkuIds.length;
@@ -1315,7 +1334,7 @@ export function SearchBoard() {
         return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
       }
     }
-    if (showOnlyProfitable) {
+    if (isFlatView) {
       const row = flattenedRows.find((r: any) => String(r.skuId) === String(skuId));
       if (row) {
         const propsRaw = row.regionSalePvInfoList || row.properties || [];
@@ -2185,207 +2204,230 @@ export function SearchBoard() {
     <div className="flex-1 flex flex-col min-h-0 w-full">
       {/* Unified workspace card */}
       <div className="flex-1 min-h-0 bg-card border border-border/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
-        {/* Unified workspace toolbar with inline search */}
+        {/* 2단 툴바: 1행 검색 / 2행 결과 조작 */}
         <div className={`shrink-0 px-4 py-3 border-b border-border/40 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-muted/30"}`}>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.18em]">
               Search
             </span>
             <div className="flex items-center gap-2 min-w-0 flex-1">
-            <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-8">
-              <button onClick={() => setSearchType("article")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>품번</button>
-              <button onClick={() => setSearchType("brand")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>브랜드</button>
-            </div>
-            <div className={`relative h-8 transition-all duration-300 ease-out ${isInputFocused ? "w-72 md:w-96" : "w-48 md:w-56"}`}>
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground h-3.5 w-3.5 pointer-events-none" />
-              <input
-                type="text"
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch(1)}
-                onFocus={() => setIsInputFocused(true)}
-                onBlur={() => setIsInputFocused(false)}
-                placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"}
-                className="w-full h-8 pl-8 pr-3 bg-background border border-border/60 rounded-lg outline-none text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow"
-              />
-              {isInputFocused && searchHistory.length > 0 && (
-                <div
-                  className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-card border border-border/60 rounded-lg shadow-lg overflow-hidden"
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30">
-                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                      <Clock size={11} /> 최근 검색
-                    </span>
-                    <button
-                      onClick={() => setSearchHistory(clearSearchHistory())}
-                      className="text-[10px] font-medium text-muted-foreground hover:text-destructive transition-colors"
-                    >
-                      전체 삭제
-                    </button>
-                  </div>
-                  <ul className="max-h-72 overflow-y-auto py-1">
-                    {searchHistory.map((entry) => (
-                      <li key={`${entry.type}:${entry.keyword}`}>
-                        <div className="group flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                          <button
-                            onClick={() => {
-                              setSearchType(entry.type);
-                              setKeyword(entry.keyword);
-                              setIsInputFocused(false);
-                              handleSearch(1);
-                            }}
-                            className="flex-1 flex items-center gap-2 min-w-0 text-left"
-                          >
-                            <span
-                              className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                                entry.type === "article"
-                                  ? "bg-primary/10 text-primary"
-                                  : "bg-secondary text-secondary-foreground"
-                              }`}
+              <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-8">
+                <button onClick={() => setSearchType("article")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>품번</button>
+                <button onClick={() => setSearchType("brand")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>브랜드</button>
+              </div>
+              <div className={`relative h-8 transition-all duration-300 ease-out ${isInputFocused ? "w-72 md:w-96" : "w-48 md:w-56"}`}>
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground h-3.5 w-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch(1)}
+                  onFocus={() => setIsInputFocused(true)}
+                  onBlur={() => setIsInputFocused(false)}
+                  placeholder={searchType === "article" ? "품번 (콤마 구분) 입력 후 조회" : "브랜드명 입력 후 조회"}
+                  className="w-full h-8 pl-8 pr-3 bg-background border border-border/60 rounded-lg outline-none text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow"
+                />
+                {isInputFocused && searchHistory.length > 0 && (
+                  <div
+                    className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-card border border-border/60 rounded-lg shadow-lg overflow-hidden"
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30">
+                      <span className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        <Clock size={11} /> 최근 검색
+                      </span>
+                      <button
+                        onClick={() => setSearchHistory(clearSearchHistory())}
+                        className="text-[10px] font-medium text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        전체 삭제
+                      </button>
+                    </div>
+                    <ul className="max-h-72 overflow-y-auto py-1">
+                      {searchHistory.map((entry) => (
+                        <li key={`${entry.type}:${entry.keyword}`}>
+                          <div className="group flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                            <button
+                              onClick={() => {
+                                setSearchType(entry.type);
+                                setKeyword(entry.keyword);
+                                setIsInputFocused(false);
+                                handleSearch(1);
+                              }}
+                              className="flex-1 flex items-center gap-2 min-w-0 text-left"
                             >
-                              {entry.type === "article" ? "품번" : "브랜드"}
-                            </span>
-                            <span className="flex-1 truncate text-xs text-foreground">{entry.keyword}</span>
-                          </button>
-                          <button
-                            onClick={() => setSearchHistory(removeSearchHistory(entry.keyword, entry.type))}
-                            className="shrink-0 p-0.5 rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all"
-                            title="이 기록 삭제"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                              <span
+                                className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                                  entry.type === "article"
+                                    ? "bg-primary/10 text-primary"
+                                    : "bg-secondary text-secondary-foreground"
+                                }`}
+                              >
+                                {entry.type === "article" ? "품번" : "브랜드"}
+                              </span>
+                              <span className="flex-1 truncate text-xs text-foreground">{entry.keyword}</span>
+                            </button>
+                            <button
+                              onClick={() => setSearchHistory(removeSearchHistory(entry.keyword, entry.type))}
+                              className="shrink-0 p-0.5 rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all"
+                              title="이 기록 삭제"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => handleSearch(1)}
+                disabled={isLoading || !keyword.trim()}
+                className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 shrink-0`}
+              >
+                {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                조회
+              </button>
+              <button
+                onClick={handleBackgroundSearch}
+                disabled={isEnqueuing || !keyword.trim()}
+                title="서버에서 검색을 진행합니다. 창을 닫아도 계속되며 '검색 작업'에서 결과를 확인합니다."
+                className={`${toolbarBtn} border border-border/60 bg-background hover:bg-secondary/60 disabled:opacity-40 shrink-0`}
+              >
+                {isEnqueuing ? <Loader2 size={13} className="animate-spin" /> : <Inbox size={13} />}
+                백그라운드
+              </button>
+              {error && (
+                <div className="hidden lg:flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
+                  <AlertCircle size={13} className="shrink-0" />
+                  {error}
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2.5 shrink-0 pl-0.5">
-              <label
-                className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground cursor-pointer select-none whitespace-nowrap"
-                title="모든 옵션이 스킵된 품번은 검색 결과에 포함하지 않습니다"
-              >
-                <Checkbox
-                  checked={excludeSkippedOnSearch}
-                  onCheckedChange={(checked) => setExcludeSkippedOnSearchPref(checked === true)}
-                  className="h-3.5 w-3.5"
-                />
-                스킵 제외
-              </label>
-              <label
-                className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground cursor-pointer select-none whitespace-nowrap"
-                title="검토완료된 품번은 검색 결과에 포함하지 않습니다"
-              >
-                <Checkbox
-                  checked={excludeReviewedOnSearch}
-                  onCheckedChange={(checked) => setExcludeReviewedOnSearchPref(checked === true)}
-                  className="h-3.5 w-3.5"
-                />
-                검토완료 제외
-              </label>
-            </div>
-            <button
-              onClick={() => handleSearch(1)}
-              disabled={isLoading || !keyword.trim()}
-              className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 shrink-0`}
-            >
-              {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-              조회
-            </button>
-            <button
-              onClick={handleBackgroundSearch}
-              disabled={isEnqueuing || !keyword.trim()}
-              title="서버에서 검색을 진행합니다. 창을 닫아도 계속되며 '검색 작업'에서 결과를 확인합니다."
-              className={`${toolbarBtn} border border-border/60 bg-background hover:bg-secondary/60 disabled:opacity-40 shrink-0`}
-            >
-              {isEnqueuing ? <Loader2 size={13} className="animate-spin" /> : <Inbox size={13} />}
-              백그라운드
-            </button>
-            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold shrink-0">
-              {showOnlyProfitable ? flattenedRows.length : items.length} 건
-            </span>
-            {error && (
-              <div className="hidden lg:flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
-                <AlertCircle size={13} className="shrink-0" />
-                {error}
-              </div>
-            )}
           </div>
-          </div>
+
           <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.18em]">
                 View
               </span>
-              <DashboardViewTabs
-                showOnlyProfitable={showOnlyProfitable}
-                showOnlyUnprocessed={showOnlyUnprocessed}
-                onChange={({ profitable, unprocessed }) => {
-                  setShowOnlyProfitable(profitable);
-                  setShowOnlyUnprocessed(unprocessed);
-                }}
-              />
-            </div>
-          {/* Right: view config + filters + actions */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <div className="flex items-center gap-1.5 pr-2 mr-1 border-r border-border/50">
-              <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border/60 bg-background px-2.5">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">조회수</span>
+              <DashboardViewTabs view={workspaceView} onViewChange={setWorkspaceView} />
+              <DisplayFilterSelect value={displayFilter} onChange={setDisplayFilter} />
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">분류</span>
                 <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className={`${toolbarBtnOutline} h-8 min-w-[72px] cursor-pointer`}
                 >
-                  <option value={50}>50개</option>
-                  <option value={100}>100개</option>
-                  <option value={200}>200개</option>
+                  {categories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </div>
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">분류</span>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className={`${toolbarBtnOutline} h-8 min-w-[72px] cursor-pointer`}
-              >
-                {categories.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+              <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold shrink-0">
+                {isFlatView ? filteredFlattenedRows.length : filteredItems.length} 건
+              </span>
             </div>
 
-            <button
-              onClick={() => {
-                if (!window.confirm("현재 검색 결과를 모두 비울까요?")) return;
-                setItems([]);
-                setSelectedSkus({});
-                setExpandedRows({});
-                setError(null);
-                setTotalCount(0);
-                setBrandLastApiPage(0);
-                showFeedback("워크스페이스 목록을 비웠습니다.");
-              }}
-              disabled={items.length === 0}
-              title="검색 결과 목록을 모두 비웁니다"
-              className={`${toolbarBtnOutline} text-muted-foreground hover:text-destructive disabled:opacity-30`}
-            >
-              <Trash2 size={13} /> 목록 비우기
-            </button>
-            <button onClick={resetAllWidths} title="열 너비를 기본값으로 초기화" className={`${toolbarBtnOutline} text-muted-foreground hover:text-foreground`}>
-              <RotateCcw size={13} /> 너비 초기화
-            </button>
-            <button onClick={() => setIsSettingsOpen(true)} className={toolbarBtnGhost}>
-              <Settings2 size={13} /> 마진
-            </button>
-            <button
-              onClick={handleBatchBid}
-              disabled={(showOnlyProfitable ? filteredFlattenedRows : filteredItems).length === 0 || Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding}
-              className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30`}
-            >
-              <Gavel size={13} /> 일괄 입찰
-            </button>
-          </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={handleBatchBid}
+                disabled={(isFlatView ? filteredFlattenedRows : filteredItems).length === 0 || Object.values(selectedSkus).filter(Boolean).length === 0 || isBidding}
+                className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30`}
+              >
+                <Gavel size={13} /> 일괄 입찰
+              </button>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setOverflowOpen((v) => !v)}
+                  className={toolbarBtnGhost}
+                  aria-label="더보기 메뉴"
+                  aria-expanded={overflowOpen}
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+                {overflowOpen && (
+                  <>
+                    <button
+                      type="button"
+                      className="fixed inset-0 z-40 cursor-default"
+                      aria-label="메뉴 닫기"
+                      onClick={() => setOverflowOpen(false)}
+                    />
+                    <div className="absolute right-0 top-full mt-1.5 z-50 w-56 rounded-lg border border-border/60 bg-card shadow-lg py-1 text-xs">
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        검색 옵션
+                      </div>
+                      <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 cursor-pointer">
+                        <Checkbox
+                          checked={excludeSkippedOnSearch}
+                          onCheckedChange={(checked) => setExcludeSkippedOnSearchPref(checked === true)}
+                          className="h-3.5 w-3.5"
+                        />
+                        스킵 제외 (검색 시)
+                      </label>
+                      <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 cursor-pointer">
+                        <Checkbox
+                          checked={excludeReviewedOnSearch}
+                          onCheckedChange={(checked) => setExcludeReviewedOnSearchPref(checked === true)}
+                          className="h-3.5 w-3.5"
+                        />
+                        검토완료 제외 (검색 시)
+                      </label>
+                      <div className="my-1 border-t border-border/40" />
+                      <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+                        <span className="text-muted-foreground">조회수</span>
+                        <select
+                          value={pageSize}
+                          onChange={(e) => setPageSize(Number(e.target.value))}
+                          className="bg-transparent font-semibold outline-none cursor-pointer"
+                        >
+                          <option value={50}>50개</option>
+                          <option value={100}>100개</option>
+                          <option value={200}>200개</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setIsSettingsOpen(true); setOverflowOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 text-left"
+                      >
+                        <Settings2 size={13} /> 마진 설정
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { resetAllWidths(); setOverflowOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 text-left"
+                      >
+                        <RotateCcw size={13} /> 너비 초기화
+                      </button>
+                      <button
+                        type="button"
+                        disabled={items.length === 0}
+                        onClick={() => {
+                          if (!window.confirm("현재 검색 결과를 모두 비울까요?")) return;
+                          setItems([]);
+                          setSelectedSkus({});
+                          setExpandedRows({});
+                          setError(null);
+                          setTotalCount(0);
+                          setBrandLastApiPage(0);
+                          showFeedback("워크스페이스 목록을 비웠습니다.");
+                          setOverflowOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 text-left text-destructive disabled:opacity-30"
+                      >
+                        <Trash2 size={13} /> 목록 비우기
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
         {/* Brand exploration hint */}
@@ -2416,7 +2458,13 @@ export function SearchBoard() {
                 </th>
 
                 <th style={{ width: `${columnWidths.info}px` }} className="relative group/header px-2 align-middle border-r border-secondary/10">
-                  <span>{showOnlyProfitable ? "알짜 수익 상품 (SKU)" : "중국 시장 정보"}</span>
+                  <span>
+                    {workspaceView === "profitable"
+                      ? "수익 옵션 (SKU)"
+                      : workspaceView === "sku"
+                        ? "전체 옵션 (SKU)"
+                        : "중국 시장 정보"}
+                  </span>
                   <ResizeHandle column="info" />
                 </th>
                 
@@ -2498,11 +2546,11 @@ export function SearchBoard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary/10">
-              {(!showOnlyProfitable && filteredItems.length === 0) || (showOnlyProfitable && filteredFlattenedRows.length === 0) ? (
+              {(!isFlatView && filteredItems.length === 0) || (isFlatView && filteredFlattenedRows.length === 0) ? (
                 <tr><td colSpan={9} className="py-16 text-center text-muted-foreground/70 text-sm">
-                  {items.length === 0 ? "검색을 시작해 주세요." : "해당 분류나 수익 조건에 맞는 상품이 목록에 없습니다."}
+                  {items.length === 0 ? "검색을 시작해 주세요." : "해당 분류나 표시 조건에 맞는 상품이 목록에 없습니다."}
                 </td></tr>
-              ) : showOnlyProfitable ? (
+              ) : isFlatView ? (
                 // --- 마마를 위한 알짜배기 목록 (Flattened Mode) ---
                 sortedFlattenedRows.map((row, idx) => {
                   const item = row.parent;
@@ -2740,8 +2788,7 @@ export function SearchBoard() {
                     profit = poizonPriceNum - fee - Number(naverPrice);
                   }
 
-                  // 필터링 적용: '수익 상품만 보기' 활성화 시 수익이 0 이하인 항목은 숨김
-                  if (showOnlyProfitable && profit <= 0) return null;
+                  // 수익 필터는 Flat「수익 옵션」뷰에서 이미 적용됨
 
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isExpanded = !!expandedRows[item.id];
@@ -2782,71 +2829,26 @@ export function SearchBoard() {
                         }}
                       >
                         <td className="px-1 text-center relative border-r border-secondary/10" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center justify-start gap-0">
-                            {/* slot1: 선택 */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <Checkbox
-                                aria-label="이 품번의 모든 옵션 입찰 선택"
-                                checked={allChildSelected ? true : someChildSelected ? "indeterminate" : false}
-                                onCheckedChange={() => setManySelected(childSkuIds, !allChildSelected)}
-                              />
-                            </div>
-                            {/* slot2: 검토완료 */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <ReviewCheckButton
-                                state={reviewState}
-                                partialLabel={someHandled ? `${handledCount}/${totalCount}` : undefined}
-                                onClick={() => toggleItemHandled(item)}
-                              />
-                            </div>
-                            {/* slot3: 메모 */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <button
-                                onClick={() => setMemoEditor(memoEditor?.spuId === spuKey ? null : { spuId: spuKey, value: status?.memo ?? "" })}
-                                title={hasMemo ? `메모: ${status?.memo}` : "메모 추가"}
-                                className={`p-1 rounded-md transition-all ${hasMemo ? 'text-amber-600 bg-amber-500/10 hover:bg-amber-500/20' : 'text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5'}`}
-                              >
-                                <StickyNote size={14} />
-                              </button>
-                            </div>
-                            {/* slot4: 스킵 (세부옵션 눈 아이콘과 수직 정렬) */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleToggleSkip(item, false);
-                                }}
-                                disabled={childSkuIds.length === 0}
-                                title={
-                                  childSkuIds.length === 0
-                                    ? "옵션 정보가 없어 스킵할 수 없습니다"
-                                    : allSkusSkipped
-                                      ? "이 품번 전체 옵션 스킵 해제"
-                                      : "이 품번 전체 옵션(사이즈) 스킵"
-                                }
-                                className={`p-1 rounded-md transition-all disabled:opacity-20 disabled:cursor-not-allowed ${allSkusSkipped ? 'text-orange-600 bg-orange-500/15 ring-1 ring-orange-500/40' : 'text-muted-foreground/25 hover:text-muted-foreground/60 hover:bg-secondary/60'}`}
-                              >
-                                {allSkusSkipped ? <EyeOff size={14} /> : <Eye size={14} />}
-                              </button>
-                            </div>
-                            {/* slot5: 영구 제외 */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <button
-                                onClick={() => {
-                                  setItemToExclude({ articleNumber: item.articleNumber, title: item.title, idx });
-                                  setExcludeReason("");
-                                  setIsExcludeModalOpen(true);
-                                }}
-                                title="이 품번 검색에서 영구 제외"
-                                className="p-1 text-muted-foreground/30 hover:text-orange-500 hover:bg-orange-500/5 rounded-md transition-all"
-                              ><Ban size={14} /></button>
-                            </div>
-                            {/* slot6: 임시 삭제 */}
-                            <div className="w-6 flex items-center justify-center shrink-0">
-                              <button onClick={() => removeItem(idx)} title="목록에서 임시 삭제" className="p-1 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 rounded-md transition-all"><Trash2 size={14} /></button>
-                            </div>
-                          </div>
+                          <SpuRowManageCell
+                            allChildSelected={allChildSelected}
+                            someChildSelected={someChildSelected}
+                            onSelectToggle={() => setManySelected(childSkuIds, !allChildSelected)}
+                            reviewState={reviewState}
+                            partialLabel={someHandled ? `${handledCount}/${totalCount}` : undefined}
+                            onReviewToggle={() => toggleItemHandled(item)}
+                            hasMemo={hasMemo}
+                            memoTitle={hasMemo ? `메모: ${status?.memo}` : "메모 추가"}
+                            onMemoClick={() => setMemoEditor(memoEditor?.spuId === spuKey ? null : { spuId: spuKey, value: status?.memo ?? "" })}
+                            allSkusSkipped={allSkusSkipped}
+                            childCount={childSkuIds.length}
+                            onSkipToggle={() => { void handleToggleSkip(item, false); }}
+                            onExclude={() => {
+                              setItemToExclude({ articleNumber: item.articleNumber, title: item.title, idx });
+                              setExcludeReason("");
+                              setIsExcludeModalOpen(true);
+                            }}
+                            onRemove={() => removeItem(idx)}
+                          />
 
                           {memoEditor?.spuId === spuKey && (
                             <div className="absolute left-2 top-full mt-1 z-[70] w-64 bg-background border border-border rounded-lg shadow-xl p-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">

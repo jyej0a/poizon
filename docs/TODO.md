@@ -1,10 +1,14 @@
-# 프로젝트 구현 TODO (기반: PRD v0.5)
+# 프로젝트 구현 TODO (기반: PRD v0.9)
 
 ## 0. 프로젝트 공통 및 인프라
 - [x] Next.js 15 (App Router) + Tailwind v4 + shadcn/ui 기반 설정
 - [x] Supabase 기본 연결 및 Clerk (Native Integration) 초기 세팅
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-06-18, 판매량 정합성·POIZON 문의 항목)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-06-19, SKU 입찰표시·검토완료·상태 DB)
+- [x] `.cursor/rules/docs-sync.mdc` — 스펙 변경 시 PRD/TODO 선행 갱신 규칙 (2026-08-24)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 4단계 UI 재구성 착수)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, §5.7 수집 몰 상태·추가 절차)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 몰 커버리지 +나이키KR·이랜드몰)
 
 ## 1. 프론트엔드 UI 레이아웃 및 디자인 (Completed)
 - [x] 전역 테마 및 스타일 파일 (`app/globals.css`) 설정
@@ -319,6 +323,7 @@
 - [x] **S2** 저장 구조 결정 — `search_job_items.payload.sourceOffers`에 포함
 - [x] **S3** 백그라운드 잡 단계 교체 — `naver` 단계를 `sourceOffers` 수집으로 교체
 - [x] **S4** 초기 타깃 몰 연결 — 롯데ON, 롯데백화점몰(`mall_no=2`), 롯데아이몰, 무신사, 코오롱몰, SSG, G마켓
+  - (+2026-08-24) **나이키 코리아**(`nike`), **이랜드몰**(`elandmall`)
   - 롯데ON은 정규식 필드 조립 대신 `priceInfo` 포함 **상품 객체 단위** 파싱 (`extractJsonObjectsContainingKey`).
   - 롯데백화점몰은 ellotte.com이 롯데ON `mall_no=2`로 리다이렉트되므로 같은 파서에 몰 번호만 넣어 분리 수집
   - 롯데아이몰은 `searchMain.lotte?isTemplate=Y` JSON (`search_result_goods_info`)
@@ -327,6 +332,8 @@
         상품명에는 품번이 없고 상품코드(`TLTCM26521BLK`)에만 있으므로 제목에 코드를 붙여 검증한다
   - SSG 검색 HTML(`/search.ssg`)은 403. 상품 목록은 `POST /api/item/all`(target=`pc_item`)로 수집.
   - G마켓은 `__NEXT_DATA__` 파서를 넣었으나 서버 `fetch`는 Akamai 403. 브라우저에서는 검색됨
+  - 나이키 코리아는 Wall SSR `__NEXT_DATA__`의 `productGroupings` (공식몰 품번 검색)
+  - 이랜드몰은 검색 HTML 상품 카드의 `data-item-no` / `data-saleprice` / `data-item-name`
   - **품번 검증 필수** (`matchesArticleNumber`) — 몰 검색은 품번으로 질의해도 무관한 상품을 섞어 준다.
         실측: `CW2288-111` 60건 중 13건이 다른 상품이고 최저가(77,420원)가 전혀 다른 모델,
         `DD1391-100` 9건 중 8건이 5,070원대 잡화. 걸러내지 않으면 원가·마진이 그대로 어긋난다
@@ -338,10 +345,13 @@
 
 #### S4 남은 과제
 
-- [ ] 몰 커버리지 확대 — 코오롱 계열은 코오롱몰에서 모델코드로 잡히지만, 스니커즈 외 타 브랜드는 여전히 빈 칸이 있다
-- [ ] 파서 회귀 감시 — 몰이 마크업/엔드포인트를 바꾸면 조용히 0건이 된다.
-      `scripts/check-source-offers.ts`로 품번 몇 개를 주기적으로 확인
-      코오롱몰 persisted query hash가 바뀌면 `lib/sourcing/providers/kolonmall.ts`의 `SEARCH_HASH`를 갱신해야 한다
+- [~] 몰 커버리지 확대 — **2026-08-24**: `nike`(나이키 코리아, `__NEXT_DATA__` Wall) · `elandmall`(이랜드몰 HTML 카드) 추가.
+      스니커즈(품번 검색) 공백을 줄이는 1차 확장. 하이버/29CM/W컨셉은 공개 검색 API가 서버 fetch에 닫혀 보류.
+      코오롱 계열 외 의류·잡화 빈 칸은 추가 몰·파서로 계속 확대
+- [x] **수집 몰 게시판 상태 관리** (`/dashboard/malls`, PRD §5.7) — 활성·품질·점검 상태(`ok`/`empty`/`failed`/미점검),
+      상태 필터·요약 카운트·개별/전체 연결 점검·캐시 비우기. 몰 추가 절차는 레지스트리+파서 (UI 전용 등록 없음)
+- [ ] 파서 회귀 감시 자동화 — `scripts/check-source-offers.ts` 주기 실행 + (선택) 워커/크론 연동.
+      코오롱몰 persisted query hash 변경 시 `lib/sourcing/providers/kolonmall.ts`의 `SEARCH_HASH` 갱신
 
 ### 10.3 [3단계] 캐시·동시성
 
@@ -354,18 +364,26 @@
       청크 **내부**의 SPU → globalSKU → fallbackSKU 순차 `await`는 데이터 의존성 때문에 남아 있음
 - [x] **F14** 네이버 동시성 상한 5 + 화이트리스트 잡당 1회 로드 (2단계에서 처리)
 
-### 10.4 [4단계] UI 재구성
+### 10.4 [4단계] UI 재구성 — **착수 중 (2026-08-24)**
 
-- [ ] **F8** 툴바 2단 분리 — 1행(검색: 타입·입력·조회·진행 잡 배지) / 2행(결과: 뷰 탭·표시·분류·건수·일괄 입찰),
-      부가 액션(너비 초기화·목록 비우기·마진·조회수)은 오버플로 메뉴
-- [ ] **F9** 관리 열 6슬롯 정규화 — SPU `선택·검토·메모·스킵·제외·삭제` vs SKU `선택·입찰·재고·검토·메모·스킵`로
-      같은 x좌표에 다른 의미. 정규 순서 `선택·입찰·재고·검토·메모·스킵`으로 통일, SPU 전용(제외·삭제)은 케밥 메뉴
-- [ ] **F10** '검토' 개념 통합 — 검색 시 `스킵 제외`·`검토완료 제외`(localStorage 기본 `true`) + 목록 `미처리만`이
-      4곳에 분산. 「표시」 드롭다운 1개(전체/미처리/스킵 숨김/검토 숨김)로 통합하고, 검색 조건은 `search_jobs.options`에 기록
-- [ ] **F11** '수익 상품만'을 뷰 탭으로 승격 — 현재 토글 시 SPU 계층이 사라지고 SKU flat으로 데이터 모델이 바뀜.
-      `품번 | 옵션 | 수익 옵션` 탭으로 필터와 뷰를 개념 분리
+> PRD v0.7 §5.1 반영. 뷰(데이터 모델)와 표시(필터)를 분리하고 툴바를 2단·오버플로로 정리한다.
+
+- [x] **F8** 툴바 2단 분리 — 1행(검색: 타입·입력·조회·백그라운드) / 2행(결과: 뷰 탭·표시·분류·건수·일괄 입찰),
+      부가 액션(너비 초기화·목록 비우기·마진·조회수·검색 제외 옵션)은 오버플로 메뉴 (`MoreHorizontal`)
+- [x] **F9** 관리 열 6슬롯 정규화 — SKU와 동일 순서 `선택·입찰·재고·검토·메모·스킵`.
+      SPU는 입찰/재고 자리만 유지, 제외·삭제는 케밥 (`spu-row-manage-cell.tsx`)
+- [x] **F10** '검토' 개념 통합 — 「표시」 드롭다운(`전체`/`미처리`/`스킵 숨김`/`검토 숨김`).
+      검색 시 스킵·검토완료 제외는 오버플로 「검색 옵션」+ localStorage + `search_jobs.options` 유지
+- [x] **F11** '수익 상품만'을 뷰 탭으로 승격 — `품번 | 옵션 | 수익 옵션`
+      (`workspaceView`: hierarchy | sku | profitable). 표시 필터와 독립
 - [ ] 컬럼 9 → 7 병합 — `선택·상태` / `상품` / `POIZON`(거래가+노출가) / `원가 오퍼` / `마진` / `판매(중국·현지)` / `입찰`.
       **선행**: 8.2 노출가 기준값 확정 (SKU는 `leakPrice`, SPU는 `minPrice`로 같은 컬럼에서 소스 불일치)
+
+#### 4단계 구현 메모 (2026-08-24)
+
+- `components/dashboard/dashboard-view-tabs.tsx` — 뷰 탭 + `DisplayFilterSelect`
+- `components/dashboard/spu-row-manage-cell.tsx` — SPU 관리 열
+- `search-board.tsx` — `showOnlyProfitable`/`showOnlyUnprocessed` 제거 → `workspaceView`/`displayFilter`
 
 ### 10.5 [5단계] 컴포넌트 분해·접근성
 
