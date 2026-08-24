@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { getExcludedArticles, removeExcludedArticle } from "@/app/actions/excluded-articles";
 import { Ban, Search, RefreshCw, Loader2, ArrowLeftRight } from "lucide-react";
-import { format } from "date-fns";
+import { formatDateTime } from "@/lib/utils/format-date";
 
 export default function ExcludedListPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -129,7 +129,7 @@ export default function ExcludedListPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-center text-xs text-muted-foreground">
-                      {format(new Date(item.excluded_at), "yyyy-MM-dd HH:mm")}
+                      {formatDateTime(item.excluded_at)}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button 

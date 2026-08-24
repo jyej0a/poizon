@@ -1,18 +1,29 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   Search, Loader2, Gavel, ImageIcon, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Settings2, RotateCcw, X,
-  Trash2, Ban, Copy, Check, Clock, Filter, ArrowUp, ArrowDown, ChevronsUpDown,
-  Plus, StickyNote, Flag, Save, EyeOff, Eye
+  Trash2, Ban, Copy, Check, Clock, ArrowUp, ArrowDown, ChevronsUpDown,
+  Plus, StickyNote, Save, EyeOff, Eye, Inbox
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
+import { enqueueSearchJob, getSearchJobDetail } from "@/app/actions/search-jobs";
+import { getSourceOffers } from "@/app/actions/source-offers";
+import { useSearchJobs } from "@/components/providers/search-jobs-provider";
 import { formatSalesVolume, getSkuSalesValue } from "@/lib/utils/sales-volume";
+import {
+  applyStatsToItemData,
+  brandItemKey,
+  buildSearchItem,
+  buildStatsMaps,
+  extractBrandResultsFromResponse,
+  getSpuKeyFromItem,
+  resolveSkuId,
+} from "@/lib/search/search-item";
 import { executeBidding, getExistingBidsForSkus, getBidHistoryBySkuIds, type BidPayload, type ExistingBidInfo, type ExecuteBiddingMode } from "@/app/actions/bidding";
 import { getSkuRecommendations } from "@/app/actions/recommendations";
-import { getNaverShoppingResults } from "@/app/actions/naver";
-import type { NaverShoppingItem } from "@/lib/api/naver-shopping";
 import { getSystemSettings } from "@/app/actions/settings";
 import { getExcludedArticles, addExcludedArticle } from "@/app/actions/excluded-articles";
 import { getSkippedItems, addSkippedItems, removeSkippedItems } from "@/app/actions/skipped-items";
@@ -23,74 +34,21 @@ import { getSkuRowVisualState, getSpuRowVisualState } from "@/lib/utils/sku-row-
 import { EMPTY_SKU_STATUS, type SkuStatus } from "@/types/sku-status";
 import { calculateMargin, type SystemSettings } from "@/lib/utils/calculate-margin";
 import { formatBidDate } from "@/lib/utils/poizon-listing";
+import { isTransientActionError } from "@/lib/utils";
+import type { SourceOffer } from "@/types/source-offer";
+import { getBestSourceOffer, getBestSourceOfferPrice } from "@/lib/sourcing/source-offer-view";
 import { MarginSettingsDialog } from "./margin-settings-dialog";
 import { BidStatusIndicator, SpuBidSummary, type BidDisplaySource, type BidStatusInfo } from "./bid-status-indicator";
 import { SkuRowManageCell } from "./sku-row-manage-cell";
 import { StockStatusIndicator } from "./stock-status-indicator";
 import { ReviewCheckButton, type ReviewCheckState } from "./review-check-button";
-import { NaverShoppingResultsDialog } from "./naver-shopping-results-dialog";
-
-function NaverPriceCell({
-  item,
-  loading,
-  emptyClassName = "opacity-20",
-  onOpen,
-}: {
-  item?: NaverShoppingItem | null;
-  loading?: boolean;
-  emptyClassName?: string;
-  onOpen?: () => void;
-}) {
-  if (loading) {
-    return <Loader2 size={12} className="animate-spin opacity-40" />;
-  }
-  if (!item) {
-    return <span className={emptyClassName}>—</span>;
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="hover:underline flex items-center gap-1 cursor-pointer"
-      >
-        ₩{Number(item.lprice).toLocaleString()}
-      </button>
-      <span className="text-[9px] opacity-40 font-bold uppercase tracking-tighter">{item.mallName}</span>
-    </>
-  );
-}
-
-function extractSkuListFromStat(statItem: any): any[] {
-  if (!statItem) return [];
-  if (Array.isArray(statItem)) {
-    return statItem.flatMap((item) => extractSkuListFromStat(item));
-  }
-  const nested = statItem.skuInfoList || statItem.skuSaleInfos;
-  if (Array.isArray(nested) && nested.length > 0) return nested;
-  if (statItem.skuId || statItem.regionSkuId) return [statItem];
-  return [];
-}
-
-function resolveSkuId(sku: {
-  skuId?: number | string;
-  dwSkuId?: number | string;
-  regionSkuId?: number | string;
-} | null | undefined): string {
-  if (!sku) return "";
-  const id = sku.skuId ?? sku.dwSkuId ?? sku.regionSkuId;
-  if (id == null || id === "") return "";
-  return String(id);
-}
+import { DashboardViewTabs } from "./dashboard-view-tabs";
+import { SourceOfferPriceCell } from "./source-offer-price-cell";
+import { SourceOfferResultsDialog } from "./source-offer-results-dialog";
 
 function getChildSkuIds(item: { skuDetails?: any[] } | null | undefined): string[] {
   const ids = (item?.skuDetails || []).map(resolveSkuId).filter(Boolean);
   return [...new Set(ids)];
-}
-
-function getSpuKeyFromItem(item: { id?: string | number }): string {
-  return String(item.id ?? "").replace(/[^0-9]/g, "");
 }
 
 /** 옵션 전체가 스킵된 품번인지 (검색 단계 제외용) */
@@ -136,77 +94,6 @@ function resolveExposurePriceValue(
     (l: any) => l.buyerRegion === "CN" || l.region === "CN"
   )?.leakPrice;
   return exposurePr ?? rec?.globalMinPrice ?? fallbackPrice ?? "—";
-}
-
-function resolveSkuDetails(rawData: any, skuList: any[]): any[] {
-  const fromStats = rawData.skuStats;
-  const extracted =
-    Array.isArray(fromStats) && fromStats.length > 0
-      ? fromStats.flatMap((item) => extractSkuListFromStat(item))
-      : [];
-
-  if (extracted.length === 0) return skuList;
-  if (!Array.isArray(skuList) || skuList.length === 0) return extracted;
-
-  const byId = new Map<string, any>();
-  const put = (sku: any) => {
-    const id = resolveSkuId(sku);
-    if (!id) return;
-    const prev = byId.get(id);
-    byId.set(id, prev
-      ? {
-          ...prev,
-          ...sku,
-          commoditySales: sku.commoditySales ?? prev.commoditySales,
-          image: sku.image || prev.image,
-          logoUrl: sku.logoUrl || prev.logoUrl,
-        }
-      : sku);
-  };
-
-  skuList.forEach(put);
-  extracted.forEach(put);
-  return Array.from(byId.values());
-}
-
-function buildStatsMaps(
-  statsResKR: { success?: boolean; data?: Record<string, any[]> | any[] },
-  statsResCN: { success?: boolean; data?: Record<string, any[]> | any[] }
-) {
-  const statsMapKR = new Map<number, any>();
-  const statsMapCN = new Map<number, any>();
-
-  if (statsResKR.success && statsResKR.data && !Array.isArray(statsResKR.data) && statsResKR.data.KR) {
-    for (const st of statsResKR.data.KR) {
-      const id = Number(st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId);
-      if (id) statsMapKR.set(id, st);
-    }
-  }
-  if (statsResCN.success && statsResCN.data && !Array.isArray(statsResCN.data) && statsResCN.data.CN) {
-    for (const st of statsResCN.data.CN) {
-      const id = Number(st.spuSaleInfo?.spuId || st.spuInfo?.spuId || st.spuId);
-      if (id) statsMapCN.set(id, st);
-    }
-  }
-  return { statsMapKR, statsMapCN };
-}
-
-function applyStatsToItemData(
-  itemData: any,
-  statsMapKR: Map<number, any>,
-  statsMapCN: Map<number, any>
-) {
-  const sId = Number(itemData.spuInfo?.spuId || itemData.spuId || itemData.goodsId);
-  const stKR = statsMapKR.get(sId);
-  const stCN = statsMapCN.get(sId);
-  if (stKR) {
-    itemData.skuStats = extractSkuListFromStat(stKR);
-    itemData.spuStats = stKR.spuSaleInfo || stKR.spuInfo || {};
-  }
-  if (stCN) {
-    itemData.skuStatsCN = extractSkuListFromStat(stCN);
-    itemData.spuStatsCN = stCN.spuSaleInfo || stCN.spuInfo || {};
-  }
 }
 
 const DEFAULT_COLUMN_WIDTHS: { [key: string]: number } = {
@@ -290,19 +177,6 @@ interface SearchExclusionContext {
   skuStatuses: Record<string, SkuStatus>;
 }
 
-function brandItemKey(it: { id?: string | number; articleNumber?: string }): string {
-  return String(it.id ?? it.articleNumber);
-}
-
-function extractBrandResultsFromResponse(data: any): any[] {
-  if (Array.isArray(data?.data?.contents)) return data.data.contents;
-  if (Array.isArray(data?.contents)) return data.contents;
-  if (Array.isArray(data?.data?.list)) return data.data.list;
-  if (Array.isArray(data?.list)) return data.list;
-  if (Array.isArray(data?.data)) return data.data;
-  return [];
-}
-
 async function loadSearchExclusionContext(
   options: SearchExclusionOptions,
   spuIds: string[] = []
@@ -360,81 +234,8 @@ function filterItemsBySearchExclusion(
 }
 
 function pushSearchItemFromRaw(rawData: any, targetArray: any[], term: string) {
-  let apiData = rawData.data || rawData;
-  if (Array.isArray(apiData)) apiData = apiData[0] || {};
-  const spuInfo = apiData.spuInfo || apiData.spuList?.[0] || apiData.spuDetails || apiData;
-  const skuList = apiData.skuInfoList || apiData.skuList || apiData.skus || spuInfo.skuList || [];
-
-  if (!spuInfo?.title && !rawData?.title) return;
-
-  const articleNum = spuInfo.articleNumber || spuInfo.goodsNo || rawData.articleNumber || term || "N/A";
-  const spuIdRaw = spuInfo.spuId || spuInfo.goodsId || rawData.spuId || rawData.goodsId;
-  const finalId = spuIdRaw ? String(spuIdRaw) : term;
-
-  const skuStatsCN = rawData.skuStatsCN || [];
-  const skusKR = resolveSkuDetails(rawData, skuList);
-
-  const totalSalesValue = skusKR.reduce((sum: number, s: any) => {
-    const v = getSkuSalesValue(s, skuStatsCN, "globalSoldNum30");
-    return sum + (v ?? 0);
-  }, 0);
-  const localSalesValue = skusKR.reduce((sum: number, s: any) => {
-    const v = getSkuSalesValue(s, skuStatsCN, "localSoldNum30");
-    return sum + (v ?? 0);
-  }, 0);
-
-  targetArray.push({
-    id: finalId,
-    articleNumber: articleNum,
-    brand: spuInfo.brandName || spuInfo.brand || "-",
-    category:
-      spuInfo.level1CategoryName && spuInfo.level2CategoryName
-        ? `${spuInfo.level1CategoryName} > ${spuInfo.level2CategoryName}`
-        : spuInfo.level2CategoryName || spuInfo.categoryName || "-",
-    title: spuInfo.title || spuInfo.spuTitle || spuInfo.goodsName || rawData.title || "Unknown Product",
-    image:
-      spuInfo.logoUrl || spuInfo.images?.[0] || spuInfo.image || spuInfo.imgUrl || skuList[0]?.image || null,
-    skus: skuList,
-    raw: rawData,
-    salesVolume: formatSalesVolume(totalSalesValue),
-    localSalesVolume: formatSalesVolume(localSalesValue),
-    minPrice: (() => {
-      const pr =
-        rawData.spuStats?.marketPrice?.globalMarketPriceVO?.amountText ??
-        rawData.spuStats?.minPrice?.globalMinPriceVO?.amountText ??
-        rawData.spuStats?.minPrice?.price ??
-        rawData.spuStats?.authPriceVO?.amountText ??
-        rawData.spuStats?.authPrice?.amount;
-      if (!pr) return "-";
-      if (typeof pr === "string" && pr.includes("₩")) return pr;
-      const num = Number(String(pr).replace(/[^0-9]/g, ""));
-      return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
-    })(),
-    avgPrice: (() => {
-      const pr =
-        rawData.spuStats?.averagePrice?.averagePriceVO?.amountText ??
-        rawData.spuStats?.averagePrice?.averagePrice?.amount ??
-        rawData.spuStats?.averagePrice?.globalAveragePriceVO?.amountText ??
-        rawData.spuStats?.averagePrice?.globalAveragePrice?.amount;
-      if (!pr) return "-";
-      if (typeof pr === "string" && pr.includes("₩")) return pr;
-      const num = Number(String(pr).replace(/[^0-9]/g, ""));
-      return isNaN(num) ? "—" : `₩${num.toLocaleString()}`;
-    })(),
-    skuDetails: skusKR
-      .map((sk: any) => {
-        const resolvedId = resolveSkuId(sk);
-        const originalSku = skuList.find((s: any) => resolveSkuId(s) === resolvedId);
-        return {
-          ...sk,
-          skuId: resolvedId || sk.skuId,
-          image: originalSku?.image || originalSku?.logoUrl || sk.image || null,
-        };
-      })
-      .filter((sk) => resolveSkuId(sk)),
-    skuStatsCN,
-    spuStats: rawData.spuStats || {},
-  });
+  const item = buildSearchItem(rawData, term);
+  if (item) targetArray.push(item);
 }
 
 async function applySearchExclusionFilters(
@@ -523,10 +324,15 @@ function parseNumber(value: any): number {
 }
 
 export function SearchBoard() {
+  const searchParams = useSearchParams();
+  const { refresh: refreshJobs } = useSearchJobs();
+
   const [keyword, setKeyword] = useState("");
   const [searchType, setSearchType] = useState<"article" | "brand">("article");
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isEnqueuing, setIsEnqueuing] = useState(false);
+  const [loadedJobId, setLoadedJobId] = useState<string | null>(null);
   const [items, setItems] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
@@ -556,14 +362,14 @@ export function SearchBoard() {
   const [brandLastApiPage, setBrandLastApiPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
-  // 네이버 쇼핑 및 마진용 State
-  const [naverResults, setNaverResults] = useState<Record<string, NaverShoppingItem[]>>({});
-  const [loadingNaver, setLoadingNaver] = useState<Record<string, boolean>>({});
+  // 외부 원가 오퍼 및 마진용 State
+  const [sourceOffers, setSourceOffers] = useState<Record<string, SourceOffer[]>>({});
+  const [loadingSourceOffers, setLoadingSourceOffers] = useState<Record<string, boolean>>({});
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
 
-  const [selectedNaverItems, setSelectedNaverItems] = useState<NaverShoppingItem[] | null>(null);
-  const [naverModalArticleNumber, setNaverModalArticleNumber] = useState<string>("");
-  const [isNaverModalOpen, setIsNaverModalOpen] = useState(false);
+  const [selectedSourceOffers, setSelectedSourceOffers] = useState<SourceOffer[] | null>(null);
+  const [sourceOfferModalArticleNumber, setSourceOfferModalArticleNumber] = useState<string>("");
+  const [isSourceOfferModalOpen, setIsSourceOfferModalOpen] = useState(false);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -779,12 +585,12 @@ export function SearchBoard() {
         return parseNumber(item.minPrice);
       }
       case "naver": {
-        const np = naverPrice ?? naverResults[item.articleNumber]?.[0]?.lprice;
+        const np = naverPrice ?? getBestSourceOfferPrice(sourceOffers, item.articleNumber);
         return parseNumber(np);
       }
       case "profit": {
         if (profit !== undefined) return profit;
-        const np = naverResults[item.articleNumber]?.[0]?.lprice;
+        const np = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
         const poizonPriceNum = parseNumber(item.minPrice);
         if (np && poizonPriceNum > 0 && systemSettings) {
           const { fee } = calculateMargin(poizonPriceNum, systemSettings);
@@ -827,22 +633,26 @@ export function SearchBoard() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const [settingsRes, skippedRes] = await Promise.all([
-        getSystemSettings(),
-        getSkippedItems()
-      ]);
+      try {
+        const [settingsRes, skippedRes] = await Promise.all([
+          getSystemSettings(),
+          getSkippedItems()
+        ]);
 
-      if (settingsRes.success && settingsRes.data) {
-        setSystemSettings(settingsRes.data as any);
-      }
+        if (settingsRes.success && settingsRes.data) {
+          setSystemSettings(settingsRes.data as any);
+        }
 
-      if (skippedRes.success && skippedRes.data) {
-        setSkippedSkuIds(new Set(skippedRes.data.map((item: any) => String(item.sku_id))));
-        const atMap: Record<string, string> = {};
-        skippedRes.data.forEach((item: any) => {
-          if (item.skipped_at) atMap[String(item.sku_id)] = item.skipped_at;
-        });
-        setSkippedAtBySku(atMap);
+        if (skippedRes.success && skippedRes.data) {
+          setSkippedSkuIds(new Set(skippedRes.data.map((item: any) => String(item.sku_id))));
+          const atMap: Record<string, string> = {};
+          skippedRes.data.forEach((item: any) => {
+            if (item.skipped_at) atMap[String(item.sku_id)] = item.skipped_at;
+          });
+          setSkippedAtBySku(atMap);
+        }
+      } catch (e) {
+        if (!isTransientActionError(e)) console.error("[search-board] settings/skipped load failed", e);
       }
     };
     fetchData();
@@ -857,20 +667,24 @@ export function SearchBoard() {
       .filter(Boolean);
     if (spuIds.length === 0) return;
 
-    const [itemRes, skuRes] = await Promise.all([
-      getItemStatuses(spuIds),
-      getSkuStatusesBySpuIds(spuIds),
-    ]);
+    try {
+      const [itemRes, skuRes] = await Promise.all([
+        getItemStatuses(spuIds),
+        getSkuStatusesBySpuIds(spuIds),
+      ]);
 
-    if (itemRes.success && itemRes.data) {
-      setItemStatuses((prev) => ({ ...prev, ...itemRes.data }));
-    } else if (!itemRes.success) {
-      showFeedback(`품번 상태 불러오기 실패: ${itemRes.error ?? "item_status 확인"}`);
-    }
-    if (skuRes.success && skuRes.data) {
-      setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, skuRes.data!));
-    } else if (!skuRes.success) {
-      showFeedback(`옵션 상태 불러오기 실패: ${skuRes.error ?? "sku_status 확인"}`);
+      if (itemRes.success && itemRes.data) {
+        setItemStatuses((prev) => ({ ...prev, ...itemRes.data }));
+      } else if (!itemRes.success) {
+        showFeedback(`품번 상태 불러오기 실패: ${itemRes.error ?? "item_status 확인"}`);
+      }
+      if (skuRes.success && skuRes.data) {
+        setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, skuRes.data!));
+      } else if (!skuRes.success) {
+        showFeedback(`옵션 상태 불러오기 실패: ${skuRes.error ?? "sku_status 확인"}`);
+      }
+    } catch (e) {
+      if (!isTransientActionError(e)) console.error("[search-board] item/sku status load failed", e);
     }
   }, [mergeSkuStatusFromServer]);
 
@@ -945,10 +759,6 @@ export function SearchBoard() {
     cancelledRecsRef.current.delete(key);
     setLoadingRecommendations((prev) => ({ ...prev, [key]: true }));
 
-    const clientStartedAt = Date.now();
-    // #region agent log
-    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'search-board.tsx:fetchRecommendation:start',message:'client fetchRecommendation start',data:{skuId:key,activeFetches:recActiveFetchesRef.current,queueLen:recFetchQueueRef.current.length},timestamp:Date.now(),hypothesisId:'B,E'})}).catch(()=>{});
-    // #endregion
     try {
       const res = await Promise.race([
         getSkuRecommendations(skuId),
@@ -960,18 +770,11 @@ export function SearchBoard() {
         }),
       ]);
 
-      // #region agent log
-      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'search-board.tsx:fetchRecommendation:raceDone',message:'client race settled',data:{skuId:key,success:res.success,error:res.success?undefined:(res as {error?:string}).error,elapsedMs:Date.now()-clientStartedAt},timestamp:Date.now(),hypothesisId:'B,E'})}).catch(()=>{});
-      // #endregion
-
       if (cancelledRecsRef.current.has(key)) return;
       if (res.success && res.data) {
         setSkuRecommendations((prev) => ({ ...prev, [key]: res.data }));
       }
     } catch (e: any) {
-      // #region agent log
-      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'search-board.tsx:fetchRecommendation:catch',message:'client fetchRecommendation failed',data:{skuId:key,error:e?.message,elapsedMs:Date.now()-clientStartedAt},timestamp:Date.now(),hypothesisId:'B,E,F'})}).catch(()=>{});
-      // #endregion
       console.error("Failed to fetch recommendation", e);
     } finally {
       setLoadingRecommendations((prev) => {
@@ -1112,7 +915,7 @@ export function SearchBoard() {
     if (!price || price <= 0) return null;
     const margin = calculateMargin(price, systemSettings);
     
-    // 네이버 가격(원가)이 제공되면 실제 정산 이익을 계산합니다.
+    // 최저 오퍼 원가가 제공되면 실제 정산 이익을 계산합니다.
     const actualProfit = cost ? margin.netProfit - cost : margin.netProfit;
     const actualRate = cost ? (actualProfit / cost) * 100 : margin.marginRate;
 
@@ -1134,7 +937,7 @@ export function SearchBoard() {
     
     const rows: any[] = [];
     items.forEach(item => {
-      const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+      const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
       const skus = item.skuDetails || [];
       
       skus.forEach(sku => {
@@ -1148,7 +951,7 @@ export function SearchBoard() {
         }
 
         // 필터 로직: 
-        // 1. 네이버 가격 로딩 중이면 일단 노출 (마마 말씀대로 아무것도 안 뜨면 안 되기에)
+        // 1. 원가 오퍼 로딩 중이면 일단 노출 (아무것도 안 뜨면 안 되기에)
         // 2. 가격이 있는데 수익이 0 이하이면 제외
         if (naverPrice && profit <= 0) return;
 
@@ -1162,7 +965,7 @@ export function SearchBoard() {
       });
     });
     return rows;
-  }, [items, naverResults, showOnlyProfitable, systemSettings]);
+  }, [items, sourceOffers, showOnlyProfitable, systemSettings]);
 
   // --- 카테고리 목록 추출 ---
   const categories = React.useMemo(() => {
@@ -1243,7 +1046,7 @@ export function SearchBoard() {
 
       if (showOnlyProfitable) {
         // 기존 수익 상품 필터 로직
-        const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+        const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
         const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
         if (naverPrice && !isNaN(poizonPriceNum) && poizonPriceNum > 0 && systemSettings) {
           const { fee } = calculateMargin(poizonPriceNum, systemSettings);
@@ -1254,7 +1057,7 @@ export function SearchBoard() {
       }
       return true;
     });
-  }, [items, selectedCategory, showOnlyProfitable, showOnlyUnprocessed, isItemProcessed, naverResults, systemSettings]);
+  }, [items, selectedCategory, showOnlyProfitable, showOnlyUnprocessed, isItemProcessed, sourceOffers, systemSettings]);
 
   const filteredFlattenedRows = React.useMemo(() => {
     return flattenedRows.filter(row => {
@@ -1270,7 +1073,7 @@ export function SearchBoard() {
     if (!sortConfig) return filteredItems;
     return applySort(filteredItems, (item) => getSortValue(sortConfig.key, { item }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredItems, sortConfig, naverResults, systemSettings]);
+  }, [filteredItems, sortConfig, sourceOffers, systemSettings]);
 
   const sortedFlattenedRows = React.useMemo(() => {
     if (!sortConfig) return filteredFlattenedRows;
@@ -1278,7 +1081,7 @@ export function SearchBoard() {
       getSortValue(sortConfig.key, { item: row.parent, sku: row, naverPrice: row.naverPrice, profit: row.profit })
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredFlattenedRows, sortConfig, naverResults, systemSettings]);
+  }, [filteredFlattenedRows, sortConfig, sourceOffers, systemSettings]);
 
   React.useEffect(() => {
     const idsToFetch: string[] = [];
@@ -1343,22 +1146,26 @@ export function SearchBoard() {
     const skuIds = visibleSkuIds.map(Number).filter((id) => !isNaN(id) && id > 0);
     if (skuIds.length === 0) return;
 
-    const res = await getBidHistoryBySkuIds(skuIds);
-    if (res.success && res.data) {
-      const historyMap: Record<string, BidStatusInfo> = {};
-      res.data.forEach((entry: any) => {
-        const key = String(entry.sku_id);
-        if (!historyMap[key]) {
-          historyMap[key] = {
-            price: entry.bid_price,
-            date: formatBidDate(entry.created_at),
-            createdAt: entry.created_at,
-            sizeInfo: entry.size_info || undefined,
-            source: "system",
-          };
-        }
-      });
-      setBidHistoryBySku((prev) => ({ ...prev, ...historyMap }));
+    try {
+      const res = await getBidHistoryBySkuIds(skuIds);
+      if (res.success && res.data) {
+        const historyMap: Record<string, BidStatusInfo> = {};
+        res.data.forEach((entry: any) => {
+          const key = String(entry.sku_id);
+          if (!historyMap[key]) {
+            historyMap[key] = {
+              price: entry.bid_price,
+              date: formatBidDate(entry.created_at),
+              createdAt: entry.created_at,
+              sizeInfo: entry.size_info || undefined,
+              source: "system",
+            };
+          }
+        });
+        setBidHistoryBySku((prev) => ({ ...prev, ...historyMap }));
+      }
+    } catch (e) {
+      if (!isTransientActionError(e)) console.error("[search-board] bid history load failed", e);
     }
   }, [visibleSkuIds]);
 
@@ -1366,17 +1173,23 @@ export function SearchBoard() {
     const skuIds = visibleSkuIds.map(Number).filter((id) => !isNaN(id) && id > 0);
     if (skuIds.length === 0) return;
 
-    const res = await getSkuStatuses(skuIds);
-    if (res.success && res.data) {
-      setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, res.data!));
+    try {
+      const res = await getSkuStatuses(skuIds);
+      if (res.success && res.data) {
+        setSkuStatuses((prev) => mergeSkuStatusFromServer(prev, res.data!));
+      }
+    } catch (e) {
+      if (!isTransientActionError(e)) console.error("[search-board] sku status load failed", e);
     }
   }, [visibleSkuIds, mergeSkuStatusFromServer]);
 
   useEffect(() => {
-    if (visibleSkuIds.length > 0) {
-      fetchBidHistory();
-      fetchSkuStatuses();
-    }
+    if (visibleSkuIds.length === 0) return;
+    const timer = window.setTimeout(() => {
+      void fetchBidHistory();
+      void fetchSkuStatuses();
+    }, 250);
+    return () => window.clearTimeout(timer);
   }, [visibleSkuIds.join(","), fetchBidHistory, fetchSkuStatuses]);
 
   const buildBidMemoLine = (price: number, date: string) =>
@@ -1556,7 +1369,11 @@ export function SearchBoard() {
         }
       }
     } catch (err: any) {
-      showFeedback(`오류: ${err.message}`);
+      showFeedback(
+        isTransientActionError(err)
+          ? "입찰 요청 전송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+          : `오류: ${err.message}`
+      );
     } finally {
       setIsBidding(false);
     }
@@ -1579,7 +1396,11 @@ export function SearchBoard() {
 
       await runBidding(nonConflicts);
     } catch (err: any) {
-      showFeedback(`오류: ${err.message}`);
+      showFeedback(
+        isTransientActionError(err)
+          ? "입찰 요청 전송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+          : `오류: ${err.message}`
+      );
     } finally {
       setIsBidding(false);
     }
@@ -1635,19 +1456,111 @@ export function SearchBoard() {
         setSelectedSkus({});
       }
     } catch (err: any) {
-      showFeedback(`오류: ${err.message}`);
+      showFeedback(
+        isTransientActionError(err)
+          ? "입찰 요청 전송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+          : `오류: ${err.message}`
+      );
     } finally {
       setIsBidding(false);
     }
   };
 
+  /**
+   * 검색을 백그라운드 잡으로 등록한다. 화면을 닫아도 서버에서 계속 진행되고,
+   * 완료 후 '검색 작업'에서 결과를 한 번에 불러온다.
+   */
+  const handleBackgroundSearch = async () => {
+    const searchKeyword = keyword.trim();
+    if (!searchKeyword) return;
+
+    setIsEnqueuing(true);
+    setError(null);
+    try {
+      const res = await enqueueSearchJob({
+        type: searchType,
+        keyword: searchKeyword,
+        options: {
+          pageSize,
+          excludeSkipped: excludeSkippedOnSearch,
+          excludeReviewed: excludeReviewedOnSearch,
+          ...(searchType === "brand" ? { brandPage: 1 } : {}),
+        },
+      });
+
+      if (!res.success) {
+        setError(res.error ?? "백그라운드 검색 등록에 실패했습니다.");
+        return;
+      }
+
+      setSearchHistory(addSearchHistory(searchKeyword, searchType));
+      setKeyword("");
+      showFeedback("백그라운드 검색을 등록했습니다. '검색 작업'에서 진행 상황을 볼 수 있습니다.");
+      void refreshJobs();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsEnqueuing(false);
+    }
+  };
+
+  // `/dashboard?job=<id>`로 진입하면 완료된 잡의 결과를 작업 공간에 그대로 올린다.
+  const jobIdParam = searchParams.get("job");
+  useEffect(() => {
+    if (!jobIdParam || loadedJobId === jobIdParam) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const res = await getSearchJobDetail(jobIdParam);
+        if (cancelled) return;
+
+        if (!res.success || !res.job || !res.items) {
+          setError(res.error ?? "검색 작업 결과를 불러오지 못했습니다.");
+          return;
+        }
+
+        setItems(res.items.map((row) => row.payload));
+
+        // 외부 원가 오퍼는 잡 실행 시점에 이미 수집됐으므로 재조회하지 않는다
+        setSourceOffers((prev) => {
+          const next = { ...prev };
+          res.items!.forEach((row) => {
+            const rowOffers = row.payload?.sourceOffers;
+            if (row.articleNumber && rowOffers && rowOffers.length > 0) {
+              next[row.articleNumber] = rowOffers;
+            }
+          });
+          return next;
+        });
+
+        // 브랜드 잡은 '더 보기'가 이어지도록 진행 위치를 복원한다
+        if (res.job.type === "brand") {
+          setLastBrandKeyword(res.job.keyword);
+          setBrandLastApiPage(res.job.options.brandPage ?? 1);
+          if (res.job.options.brandId != null) setCachedBrandId(res.job.options.brandId);
+        }
+
+        setLoadedJobId(jobIdParam);
+        showFeedback(`검색 작업 결과 ${res.items.length}건을 불러왔습니다.`);
+      } catch (err: any) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [jobIdParam, loadedJobId]);
+
   const handleSearch = async (page: number = 1, isBrandLoadMore = false) => {
     const searchKeyword = (page === 1 && !isBrandLoadMore) ? keyword.trim() : lastBrandKeyword;
     if (!searchKeyword) return;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'search-board.tsx:handleSearch:start',message:'search started',data:{searchType,page,keyword:searchKeyword.slice(0,40)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
 
     if (page === 1 && !isBrandLoadMore) {
       setSearchHistory(addSearchHistory(searchKeyword, searchType));
@@ -1696,7 +1609,7 @@ export function SearchBoard() {
           });
         }
 
-        // 3. 파싱 (네이버·스킵/검토 제외는 필터 이후 처리)
+        // 3. 파싱 (원가 오퍼·스킵/검토 제외는 필터 이후 처리)
         validItemDataList.forEach(itemEntry => {
           pushSearchItemFromRaw(itemEntry.data, newItems, itemEntry.term);
         });
@@ -1731,7 +1644,7 @@ export function SearchBoard() {
         }
 
         if (exclusion.items.length > 0) {
-          triggerNaverForSearchItems(exclusion.items);
+          triggerSourceOffersForSearchItems(exclusion.items);
           // 워크스페이스 누적은 유지하되, 동일 품번/SPU는 최신 결과로 갱신(중복 방지)
           setItems(prev => {
             const newKeys = new Set(exclusion.items.map(itemKey));
@@ -1835,7 +1748,7 @@ export function SearchBoard() {
         }
 
         if (itemsToAdd.length > 0) {
-          triggerNaverForSearchItems(itemsToAdd);
+          triggerSourceOffersForSearchItems(itemsToAdd);
         }
 
         setBrandLastApiPage(apiPage);
@@ -2181,41 +2094,41 @@ export function SearchBoard() {
     });
   };
 
-  const fetchNaverPrice = async (articleNumber: string) => {
+  const fetchSourceOffersForArticle = async (articleNumber: string) => {
     if (!articleNumber) return;
-    setLoadingNaver(prev => ({ ...prev, [articleNumber]: true }));
+    setLoadingSourceOffers((prev) => ({ ...prev, [articleNumber]: true }));
     try {
-      const res = await getNaverShoppingResults(articleNumber);
+      const res = await getSourceOffers(articleNumber);
       if (res.success && res.data) {
-        setNaverResults(prev => ({ ...prev, [articleNumber]: res.data }));
+        setSourceOffers((prev) => ({ ...prev, [articleNumber]: res.data }));
       }
     } catch (e) {
-      console.error("Failed to fetch naver price", e);
+      console.error("Failed to fetch source offers", e);
     } finally {
-      setLoadingNaver(prev => ({ ...prev, [articleNumber]: false }));
+      setLoadingSourceOffers((prev) => ({ ...prev, [articleNumber]: false }));
     }
   };
 
-  const triggerNaverForSearchItems = (searchItems: any[]) => {
+  const triggerSourceOffersForSearchItems = (searchItems: any[]) => {
     searchItems.forEach((item) => {
       const articleNum = item.articleNumber;
       if (
         articleNum &&
         articleNum !== "N/A" &&
-        !naverResults[articleNum] &&
-        !loadingNaver[articleNum]
+        !sourceOffers[articleNum] &&
+        !loadingSourceOffers[articleNum]
       ) {
-        void fetchNaverPrice(articleNum);
+        void fetchSourceOffersForArticle(articleNum);
       }
     });
   };
 
-  const openNaverModal = (articleNumber: string) => {
-    const items = naverResults[articleNumber];
+  const openSourceOfferModal = (articleNumber: string) => {
+    const items = sourceOffers[articleNumber];
     if (!items?.length) return;
-    setSelectedNaverItems(items);
-    setNaverModalArticleNumber(articleNumber);
-    setIsNaverModalOpen(true);
+    setSelectedSourceOffers(items);
+    setSourceOfferModalArticleNumber(articleNumber);
+    setIsSourceOfferModalOpen(true);
   };
 
   const removeItem = (indexToRemove: number) => {
@@ -2273,9 +2186,12 @@ export function SearchBoard() {
       {/* Unified workspace card */}
       <div className="flex-1 min-h-0 bg-card border border-border/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
         {/* Unified workspace toolbar with inline search */}
-        <div className={`shrink-0 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 border-b border-border/40 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-muted/30"}`}>
-          {/* Left: inline search */}
-          <div className="flex items-center gap-2 min-w-0">
+        <div className={`shrink-0 px-4 py-3 border-b border-border/40 transition-colors ${isInputFocused ? "bg-primary/[0.02]" : "bg-muted/30"}`}>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.18em]">
+              Search
+            </span>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-8">
               <button onClick={() => setSearchType("article")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "article" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>품번</button>
               <button onClick={() => setSearchType("brand")} className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${searchType === "brand" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>브랜드</button>
@@ -2378,6 +2294,15 @@ export function SearchBoard() {
               {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
               조회
             </button>
+            <button
+              onClick={handleBackgroundSearch}
+              disabled={isEnqueuing || !keyword.trim()}
+              title="서버에서 검색을 진행합니다. 창을 닫아도 계속되며 '검색 작업'에서 결과를 확인합니다."
+              className={`${toolbarBtn} border border-border/60 bg-background hover:bg-secondary/60 disabled:opacity-40 shrink-0`}
+            >
+              {isEnqueuing ? <Loader2 size={13} className="animate-spin" /> : <Inbox size={13} />}
+              백그라운드
+            </button>
             <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold shrink-0">
               {showOnlyProfitable ? flattenedRows.length : items.length} 건
             </span>
@@ -2388,6 +2313,21 @@ export function SearchBoard() {
               </div>
             )}
           </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.18em]">
+                View
+              </span>
+              <DashboardViewTabs
+                showOnlyProfitable={showOnlyProfitable}
+                showOnlyUnprocessed={showOnlyUnprocessed}
+                onChange={({ profitable, unprocessed }) => {
+                  setShowOnlyProfitable(profitable);
+                  setShowOnlyUnprocessed(unprocessed);
+                }}
+              />
+            </div>
           {/* Right: view config + filters + actions */}
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="flex items-center gap-1.5 pr-2 mr-1 border-r border-border/50">
@@ -2416,30 +2356,8 @@ export function SearchBoard() {
             </div>
 
             <button
-              onClick={() => setShowOnlyProfitable(!showOnlyProfitable)}
-              className={`${toolbarBtn} border ${
-                showOnlyProfitable
-                  ? "bg-blue-500/10 border-blue-500/40 text-blue-600"
-                  : "border-border bg-background hover:bg-secondary/60 text-muted-foreground"
-              }`}
-            >
-              <Filter size={13} className={showOnlyProfitable ? "fill-blue-600/10" : ""} />
-              수익 상품만
-            </button>
-            <button
-              onClick={() => setShowOnlyUnprocessed(!showOnlyUnprocessed)}
-              title="검토완료된 품번을 숨깁니다"
-              className={`${toolbarBtn} border ${
-                showOnlyUnprocessed
-                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600"
-                  : "border-border bg-background hover:bg-secondary/60 text-muted-foreground"
-              }`}
-            >
-              <Flag size={13} className={showOnlyUnprocessed ? "fill-emerald-600/10" : ""} />
-              미처리만
-            </button>
-            <button
               onClick={() => {
+                if (!window.confirm("현재 검색 결과를 모두 비울까요?")) return;
                 setItems([]);
                 setSelectedSkus({});
                 setExpandedRows({});
@@ -2467,6 +2385,7 @@ export function SearchBoard() {
             >
               <Gavel size={13} /> 일괄 입찰
             </button>
+          </div>
           </div>
         </div>
         {/* Brand exploration hint */}
@@ -2531,7 +2450,7 @@ export function SearchBoard() {
                   className="relative group/header px-1 text-center align-middle border-r border-secondary/10 bg-emerald-500/[0.03] cursor-pointer select-none hover:text-foreground transition-colors"
                 >
                   <div className="flex flex-col items-center justify-center leading-[1.15]">
-                    <span className="flex items-center gap-1">네이버 최저/원가 <SortIcon column="naver" /></span>
+                    <span className="flex items-center gap-1">최저 오퍼/원가 <SortIcon column="naver" /></span>
                   </div>
                   <ResizeHandle column="naver" />
                 </th>
@@ -2594,7 +2513,7 @@ export function SearchBoard() {
                   const propsStr = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ");
                   const bidPrice = biddingPrices[sku.skuId];
                   const naverPrice = row.naverPrice;
-                  const naverItem = naverResults[item.articleNumber]?.[0];
+                  const naverItem = getBestSourceOffer(sourceOffers, item.articleNumber);
                   const isBiddable = item.raw?.userCanBidding !== false;
                   const isSkipped = skippedSkuIds.has(resolveSkuId(sku));
                   const skuKey = resolveSkuId(sku);
@@ -2754,14 +2673,14 @@ export function SearchBoard() {
                           </span>
                         </div>
                       </td>
-                      {/* 네이버 원가 */}
+                      {/* 최저 오퍼 원가 */}
                       <td className="px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.01] font-bold text-emerald-600">
                         <div className="flex flex-col items-center justify-center -space-y-0.5">
-                          <NaverPriceCell
+                          <SourceOfferPriceCell
                             item={naverItem}
-                            loading={!!loadingNaver[item.articleNumber] && !naverItem}
+                            loading={!!loadingSourceOffers[item.articleNumber] && !naverItem}
                             emptyClassName="opacity-10"
-                            onOpen={() => openNaverModal(item.articleNumber)}
+                            onOpen={() => openSourceOfferModal(item.articleNumber)}
                           />
                         </div>
                       </td>
@@ -2811,7 +2730,7 @@ export function SearchBoard() {
               ) : (
                 // --- 기존 품번 중심 목록 (Hierarchy Mode) ---
                 sortedItems.map((item, idx) => {
-                  const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                  const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
                   const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
                   
                   // 수익 계산 로직 (필터링용)
@@ -3022,17 +2941,17 @@ export function SearchBoard() {
                         </td>
                         <td className="px-1 text-center border-r border-secondary/10 bg-emerald-500/[0.01] font-bold text-emerald-600">
                           <div className="flex flex-col items-center justify-center -space-y-0.5">
-                            <NaverPriceCell
-                              item={naverResults[item.articleNumber]?.[0]}
-                              loading={!!loadingNaver[item.articleNumber]}
-                              onOpen={() => openNaverModal(item.articleNumber)}
+                            <SourceOfferPriceCell
+                              item={getBestSourceOffer(sourceOffers, item.articleNumber)}
+                              loading={!!loadingSourceOffers[item.articleNumber]}
+                              onOpen={() => openSourceOfferModal(item.articleNumber)}
                             />
                           </div>
                         </td>
-                        {/* 순수익 컬럼: 포이즌 노출가 - 수수료 - 네이버 최저가 */}
+                        {/* 순수익 컬럼: 포이즌 노출가 - 수수료 - 최저 오퍼 원가 */}
                         <td className="px-1 text-center border-r border-secondary/10 bg-blue-500/[0.02]">
                           {(() => {
-                            const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                            const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
                             if (!naverPrice || item.minPrice === "—" || !systemSettings) return <span className="opacity-20 text-[11px]">—</span>;
                             const poizonPriceNum = Number(String(item.minPrice).replace(/[^0-9]/g, ""));
                             if (isNaN(poizonPriceNum) || poizonPriceNum <= 0) return <span className="opacity-20 text-[11px]">—</span>;
@@ -3066,7 +2985,7 @@ export function SearchBoard() {
                         const propsStr = propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ");
                         const skuPrice = sku.minPrice?.globalMinPriceVO?.amountText ?? sku.minPrice?.price ?? "—";
                         const bidPrice = biddingPrices[sku.skuId];
-                        const naverPrice = naverResults[item.articleNumber]?.[0]?.lprice;
+                        const naverPrice = getBestSourceOfferPrice(sourceOffers, item.articleNumber);
                         const margin = getMargin(bidPrice, naverPrice ? Number(naverPrice) : undefined);
                         const skuKey = resolveSkuId(sku);
                         const isSkuSkipped = skippedSkuIds.has(skuKey);
@@ -3222,11 +3141,11 @@ export function SearchBoard() {
                             </td>
                             <td className="px-1 text-center border-r border-dashed bg-emerald-500/[0.01] font-bold text-emerald-600/70">
                                <div className="flex flex-col items-center justify-center -space-y-0.5">
-                                 <NaverPriceCell
-                                   item={naverResults[item.articleNumber]?.[0]}
-                                   loading={!!loadingNaver[item.articleNumber] && !naverResults[item.articleNumber]?.[0]}
+                                 <SourceOfferPriceCell
+                                   item={getBestSourceOffer(sourceOffers, item.articleNumber)}
+                                   loading={!!loadingSourceOffers[item.articleNumber] && !getBestSourceOffer(sourceOffers, item.articleNumber)}
                                    emptyClassName="opacity-10"
-                                   onOpen={() => openNaverModal(item.articleNumber)}
+                                   onOpen={() => openSourceOfferModal(item.articleNumber)}
                                  />
                                </div>
                             </td>
@@ -3323,11 +3242,11 @@ export function SearchBoard() {
       </div>
 
       {/* Naver Search Results Dialog */}
-      <NaverShoppingResultsDialog
-        isOpen={isNaverModalOpen}
-        onClose={() => setIsNaverModalOpen(false)}
-        items={selectedNaverItems}
-        articleNumber={naverModalArticleNumber}
+      <SourceOfferResultsDialog
+        isOpen={isSourceOfferModalOpen}
+        onClose={() => setIsSourceOfferModalOpen(false)}
+        items={selectedSourceOffers}
+        articleNumber={sourceOfferModalArticleNumber}
       />
 
       {/* Margin Settings Dialog */}

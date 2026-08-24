@@ -11,13 +11,18 @@ import {
   Gavel, 
   ListOrdered,
   Ban,
+  Inbox,
+  Loader2,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Store
 } from "lucide-react";
+import { useSearchJobs } from "@/components/providers/search-jobs-provider";
 
 export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+  const { activeCount, unseenCount } = useSearchJobs();
 
   const isActive = (href: string) =>
     href === "/dashboard" ? pathname === href : pathname.startsWith(href);
@@ -51,9 +56,19 @@ export function Sidebar() {
           )}
           <NavItem href="/dashboard" icon={<BarChart3 size={18} />} label="Dashboard" isCollapsed={isCollapsed} isActive={isActive("/dashboard")} />
           <NavItem href="/dashboard/items" icon={<Search size={18} />} label="Item Search" isCollapsed={isCollapsed} comingSoon />
+          <NavItem
+            href="/dashboard/jobs"
+            icon={activeCount > 0 ? <Loader2 size={18} className="animate-spin" /> : <Inbox size={18} />}
+            label="검색 작업"
+            isCollapsed={isCollapsed}
+            isActive={isActive("/dashboard/jobs")}
+            badge={activeCount > 0 ? activeCount : unseenCount > 0 ? unseenCount : undefined}
+            badgeTone={activeCount > 0 ? "progress" : "done"}
+          />
           <NavItem href="/dashboard/listings" icon={<Gavel size={18} />} label="입찰 관리" isCollapsed={isCollapsed} isActive={isActive("/dashboard/listings")} />
           <NavItem href="/dashboard/orders" icon={<ListOrdered size={18} />} label="Orders" isCollapsed={isCollapsed} comingSoon />
           <NavItem href="/dashboard/excluded" icon={<Ban size={18} />} label="제외 목록" isCollapsed={isCollapsed} isActive={isActive("/dashboard/excluded")} />
+          <NavItem href="/dashboard/malls" icon={<Store size={18} />} label="수집 몰" isCollapsed={isCollapsed} isActive={isActive("/dashboard/malls")} />
         </div>
 
         <div className="px-3 mt-8 space-y-1">
@@ -89,6 +104,8 @@ function NavItem({
   isCollapsed,
   isActive = false,
   comingSoon = false,
+  badge,
+  badgeTone = "done",
 }: {
   href: string;
   icon: React.ReactNode;
@@ -96,6 +113,9 @@ function NavItem({
   isCollapsed: boolean;
   isActive?: boolean;
   comingSoon?: boolean;
+  /** 진행 중 잡 수 또는 아직 열어보지 않은 완료 잡 수 */
+  badge?: number;
+  badgeTone?: "progress" | "done";
 }) {
   if (comingSoon) {
     return (
@@ -128,10 +148,33 @@ function NavItem({
       }`}
       title={isCollapsed ? label : undefined}
     >
-      <span className={`shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`}>
+      <span className={`relative shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary"}`}>
         {icon}
+        {/* 사이드바가 접힌 상태에서는 아이콘 위에 점으로만 표시 */}
+        {isCollapsed && badge !== undefined && (
+          <span
+            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
+              badgeTone === "progress" ? "bg-blue-500" : "bg-emerald-500"
+            }`}
+          />
+        )}
       </span>
-      {!isCollapsed && <span className="whitespace-nowrap">{label}</span>}
+      {!isCollapsed && (
+        <span className="flex flex-1 items-center justify-between whitespace-nowrap">
+          {label}
+          {badge !== undefined && (
+            <span
+              className={`text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center ${
+                badgeTone === "progress"
+                  ? "bg-blue-500/15 text-blue-600"
+                  : "bg-emerald-500/15 text-emerald-600"
+              }`}
+            >
+              {badge}
+            </span>
+          )}
+        </span>
+      )}
     </Link>
   );
 }

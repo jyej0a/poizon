@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { withRetry } from "@/lib/api/retry";
 
 export interface PoizonConfig {
   appKey: string;
@@ -87,63 +88,53 @@ export class PoizonClient {
    * @param businessParams 비즈니스 파라미터 (페이로드)
    */
   public async request<T = any>(endpoint: string, businessParams: Record<string, any> = {}): Promise<T> {
-    // 공통 파라미터를 비즈니스 파라미터와 병합하여 하나의 JSON Payload로 구성
-    const payload: Record<string, any> = {
-      app_key: this.appKey,
-      timestamp: Date.now(),
-      language: "en",
-      timeZone: "Asia/Seoul",
-      // access_token이 있을 때만 포함 (조회 API는 불필요, 입찰/리스팅은 필수)
-      ...(this.accessToken ? { access_token: this.accessToken } : {}),
-      ...businessParams,
-    };
-
-    // 서명 생성 후 Payload에 추가
-    payload.sign = this.generateSignature(payload);
-
     const url = `${this.baseUrl}${endpoint}`;
-    const reqStartedAt = Date.now();
-    // #region agent log
-    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:start',message:'poizon api fetch start',data:{endpoint},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
 
-    // 모든 데이터를 POST JSON Body로 전송
-    let response: Response;
-    try {
-      response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    return withRetry(
+      async () => {
+        const payload: Record<string, any> = {
+          app_key: this.appKey,
+          timestamp: Date.now(),
+          language: "en",
+          timeZone: "Asia/Seoul",
+          ...(this.accessToken ? { access_token: this.accessToken } : {}),
+          ...businessParams,
+        };
+        payload.sign = this.generateSignature(payload);
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(25_000),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || response.statusText);
+        }
+
+        const json = (await response.json()) as any;
+
+        const businessCode = json.code ?? json.status ?? json.status_code;
+        if (businessCode !== undefined && businessCode !== 200 && businessCode !== 0) {
+          const errorMsg = json.msg || json.message || json.error_msg || "Unknown API Error";
+          throw new Error(`Poizon API Error (${businessCode}): ${errorMsg}`);
+        }
+
+        return json as T;
       },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(25_000),
-    });
-    } catch (fetchErr: any) {
-      // #region agent log
-      fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:fetchError',message:'poizon api fetch failed',data:{endpoint,error:fetchErr?.message,elapsedMs:Date.now()-reqStartedAt},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-      throw fetchErr;
-    }
-    // #region agent log
-    fetch('http://127.0.0.1:7677/ingest/0db270c0-8dd8-43f3-a04b-0540fc890915',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c4e436'},body:JSON.stringify({sessionId:'c4e436',location:'poizon.ts:request:response',message:'poizon api fetch ok',data:{endpoint,status:response.status,elapsedMs:Date.now()-reqStartedAt},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      // 에러 텍스트가 비어있을 경우 상태 텍스트라도 표출
-      throw new Error(errorText || response.statusText);
-    }
-
-    const json = (await response.json()) as any;
-    
-    // Poizon API의 비즈니스 응답 코드 확인 (성공이 아니면 예외 처리)
-    const businessCode = json.code ?? json.status ?? json.status_code;
-    if (businessCode !== undefined && businessCode !== 200 && businessCode !== 0) {
-      const errorMsg = json.msg || json.message || json.error_msg || "Unknown API Error";
-      throw new Error(`Poizon API Error (${businessCode}): ${errorMsg}`);
-    }
-
-    return json as T;
+      {
+        attempts: 3,
+        onRetry: (error, attempt, delayMs) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.warn(`[Poizon] ${endpoint} retry ${attempt} in ${delayMs}ms: ${msg.slice(0, 160)}`);
+        },
+      }
+    );
   }
 }

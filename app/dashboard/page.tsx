@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { Loader2 } from "lucide-react";
 import { SearchBoard } from "@/components/dashboard/search-board";
 
 export default function DashboardPage() {
@@ -10,7 +12,16 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      <SearchBoard />
+      {/* SearchBoard가 `?job=` 파라미터를 읽으므로 Suspense 경계가 필요하다 */}
+      <Suspense
+        fallback={
+          <div className="flex-1 grid place-items-center">
+            <Loader2 className="animate-spin text-primary" size={24} />
+          </div>
+        }
+      >
+        <SearchBoard />
+      </Suspense>
     </div>
   );
 }

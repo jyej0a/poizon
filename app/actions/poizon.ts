@@ -1,48 +1,19 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
-import { getServiceRoleClient } from "@/lib/supabase/service-role";
-import { PoizonClient } from "@/lib/api/poizon";
-import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
+import { getPoizonContext } from "@/lib/api/poizon-context";
+import {
+  fetchBrandSpus,
+  fetchItemByArticleNumber,
+  fetchSpuStatistics,
+} from "@/lib/api/poizon-search";
 
 /**
- * DB에 저장된 사용자의 Poizon API Key/Secret을 가져와 
+ * DB에 저장된 사용자의 Poizon API Key/Secret을 가져와
  * PoizonClient 인스턴스를 반환하는 공통 유틸리티
  */
 export async function getPoizonClient() {
-  const { userId } = await auth();
-  if (!userId) {
-    throw new Error("Unauthorized: Please log in first.");
-  }
-
-  const supabase = getServiceRoleClient();
-
-  // 사용자 정보(users 테이블 조인 혹은 clerk_id 기준 간접 조회)
-  const { data: user } = await supabase
-    .from("users")
-    .select("id")
-    .eq("clerk_id", userId)
-    .single();
-
-  if (!user) {
-    throw new Error("사용자 동기화 정보가 없습니다.");
-  }
-
-  const { data: configData, error } = await supabase
-    .from("user_configs")
-    .select("poizon_app_key, poizon_app_secret, poizon_access_token")
-    .eq("user_id", user.id)
-    .single();
-
-  if (error || !configData?.poizon_app_key || !configData?.poizon_app_secret) {
-    throw new Error("설정에서 Poizon API Key와 Secret을 먼저 등록해 주세요.");
-  }
-
-  return new PoizonClient({
-    appKey: configData.poizon_app_key,
-    appSecret: configData.poizon_app_secret,
-    ...(configData.poizon_access_token ? { accessToken: configData.poizon_access_token } : {}),
-  });
+  const { client } = await getPoizonContext();
+  return client;
 }
 
 /**
@@ -51,17 +22,7 @@ export async function getPoizonClient() {
 export async function searchPoizonItems(keyword: string) {
   try {
     const client = await getPoizonClient();
-    
-    // 공식 문서 cURL 기반의 SKU 상세 검색 API 호출
-    const response = await client.request(
-        "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-article-number", 
-        {
-          articleNumber: keyword.trim(), 
-          region: "KR",
-          sellerStatusEnable: false,
-          buyStatusEnable: false
-        }
-    );
+    const response = await fetchItemByArticleNumber(client, keyword);
 
     return { success: true, data: response };
   } catch (error: any) {
@@ -96,73 +57,25 @@ export async function getPoizonListings() {
 export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSize = 20, knownBrandId?: number | string | null) {
   try {
     const client = await getPoizonClient();
-
-    let brandId: number | string | null = knownBrandId ?? null;
-
-    // 1단계: 이름으로 브랜드 ID 조회 (이미 알고 있으면 생략하여 호출 빈도/속도 최적화)
-    if (!brandId) {
-      const basePayload = {
-        name: brandName,
-        exactMatch: false,
-        pageSize: 5,
-        pageNum: 1,
-      };
-
-      const [brandResKo, brandResEn] = await Promise.all([
-        client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/brand/page/by-name", { ...basePayload, language: "ko" }),
-        client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/brand/page/by-name", { ...basePayload, language: "en" })
-      ]);
-
-      const extractList = (res: any) => Array.isArray(res?.data?.contents) ? res.data.contents :
-                                       Array.isArray(res?.contents) ? res.contents :
-                                       Array.isArray(res?.data?.list) ? res.data.list : [];
-
-      const brandListKo = extractList(brandResKo);
-      const brandListEn = extractList(brandResEn);
-      const mergedBrands = [...brandListKo, ...brandListEn];
-
-      if (mergedBrands.length > 0) {
-        const bestMatch = mergedBrands.find((b: any) => b.isShowLogo === 1) ||
-                          mergedBrands.find((b: any) => b.isShow === 1) ||
-                          mergedBrands[0];
-        brandId = bestMatch.brandId || bestMatch.id;
-      }
-    }
-
-    if (!brandId) {
-      console.warn(`[searchPoizonByBrand] No brand ID found for: ${brandName}`);
-      return { success: false, error: `'${brandName}' 브랜드의 고유 ID를 찾을 수 없습니다. 명칭을 다시 확인해 주시옵소서.` };
-    }
-
-    console.log(`[searchPoizonByBrand] Found brand ID: ${brandId} for keyword: ${brandName}`);
-
-    // 2단계: 브랜드 ID로 묶음(Batch) 상품 정보 조회 (Paging 적용)
-    const spuPayload = {
-      brandIdList: [brandId],
-      language: "ko",
-      region: "KR",
+    const { data, total, brandId } = await fetchBrandSpus(
+      client,
+      brandName,
       pageNum,
-      pageSize, 
-    };
-
-    const spuRes = await client.request<any>("/dop/api/v1/pop/api/v1/intl-commodity/intl/spu/spu-basic-info/by-brandId", spuPayload);
-
-    // 전체 개수(total) 추출 시도
-    const total = spuRes?.data?.total || spuRes?.total || 0;
-    
-    console.log(`[searchPoizonByBrand] SPU lookup count: ${total} results for brandId: ${brandId}`);
+      pageSize,
+      knownBrandId
+    );
 
     if (total === 0) {
-      return { 
-        success: true, 
-        data: spuRes, 
-        total: 0, 
+      return {
+        success: true,
+        data,
+        total: 0,
         brandId,
-        message: `'${brandName}' 브랜드로 검색된 상품이 없사옵니다. 지역(KR) 혹은 브랜드 명칭을 다시 확인해 보시옵소서.` 
+        message: `'${brandName}' 브랜드로 검색된 상품이 없습니다. 지역(KR) 혹은 브랜드 명칭을 다시 확인해 주세요.`,
       };
     }
 
-    return { success: true, data: spuRes, total, brandId };
+    return { success: true, data, total, brandId };
   } catch (error: any) {
     console.error("[searchPoizonByBrand] Failure:", error);
     return { success: false, error: error.message };
@@ -174,158 +87,15 @@ export async function searchPoizonByBrand(brandName: string, pageNum = 1, pageSi
  * (API 제한: 한 번에 최대 5개의 spuId만 요청 가능)
  * 다중 지역(regions) 조회를 지원하며, 서버 혼잡 방지를 위해 순차적으로 처리함.
  */
-export async function getSpuStatistics(spuIds: (number | string)[], regions: string[] = ["KR"], language: string = "ko") {
+export async function getSpuStatistics(
+  spuIds: (number | string)[],
+  regions: string[] = ["KR"],
+  language: string = "ko"
+) {
   try {
     const client = await getPoizonClient();
-    const numericSpuIds = spuIds.map(id => Number(id)).filter(id => !isNaN(id));
-    if (numericSpuIds.length === 0) return { success: true, data: [] };
-
-    const chunkSize = 5;
-    const allResultsByRegion: Record<string, any[]> = {};
-
-    for (const region of regions) {
-      const chunks = [];
-      for (let i = 0; i < numericSpuIds.length; i += chunkSize) {
-        chunks.push(numericSpuIds.slice(i, i + chunkSize));
-      }
-
-      const basePayload = {
-        sellerStatusEnable: true,
-        buyStatusEnable: true,
-        region: region,
-        language: language,
-        timeZone: region === "CN" ? "Asia/Shanghai" : "Asia/Seoul",
-        statisticsDataQry: {
-          salesEnable: true,
-          minPriceEnable: true,
-          customCodeEnable: true,
-          bidStatusEnable: true,
-          applySourceEnable: true,
-          channelInfoEnable: true,
-          forFilingEnable: true
-        }
-      };
-
-      const regionPromises = chunks.map(async (chunk, index) => {
-        // 지역별 첫 번째 청크가 아니라면 부하 방지를 위해 약간의 지연 추가
-        if (index > 0) await new Promise(res => setTimeout(res, 500));
-
-        const spuPromise = client.request<any>(POIZON_CONSTANTS.ENDPOINTS.SPU_BY_SPU, {
-          ...basePayload,
-          spuIds: chunk
-        }).catch(err => {
-          console.error(`[${region}] SPU stats error:`, err);
-          return null;
-        });
-
-        const spuRes = await spuPromise;
-        const spuData = Array.isArray(spuRes?.data?.data) ? spuRes.data.data : Array.isArray(spuRes?.data) ? spuRes.data : Array.isArray(spuRes?.contents) ? spuRes.contents : [];
-
-        const globalSpuIdByDwId = new Map<number, number>();
-        for (const item of spuData) {
-          const dwId = Number(item?.spuId ?? item?.spuInfo?.spuId);
-          const globalId = Number(item?.globalSpuId ?? item?.spuInfo?.globalSpuId);
-          if (!Number.isNaN(dwId) && !Number.isNaN(globalId) && globalId > 0) {
-            globalSpuIdByDwId.set(dwId, globalId);
-          }
-        }
-
-        const globalSpuIds = chunk
-          .map((id) => globalSpuIdByDwId.get(Number(id)))
-          .filter((id): id is number => id != null && id > 0);
-
-        let skuRes: any = null;
-        if (globalSpuIds.length === chunk.length) {
-          skuRes = await client.request<any>(POIZON_CONSTANTS.ENDPOINTS.SKU_BY_GLOBAL_SPU, {
-            ...basePayload,
-            globalSpuIds,
-          }).catch((err) => {
-            console.warn(`[${region}] SKU by-global-spu fallback to by-spu:`, err?.message ?? err);
-            return null;
-          });
-        }
-
-        if (!skuRes?.data) {
-          skuRes = await client.request<any>(POIZON_CONSTANTS.ENDPOINTS.SKU_BY_SPU, {
-            ...basePayload,
-            spuIds: chunk
-          }).catch(err => {
-            console.error(`[${region}] SKU stats error:`, err);
-            return null;
-          });
-        }
-
-        const skuData = Array.isArray(skuRes?.data?.data) ? skuRes.data.data : Array.isArray(skuRes?.data) ? skuRes.data : Array.isArray(skuRes?.contents) ? skuRes.contents : [];
-
-        const mergedMap = new Map<number, { spuId: number; skuSaleInfos: any[]; [key: string]: any }>();
-
-        const getSpuId = (item: any): number | null => {
-          const id = item?.spuId || item?.spuSaleInfo?.spuId || item?.spuInfo?.spuId || item?.goodsId;
-          const num = Number(id);
-          return id != null && !isNaN(num) ? num : null;
-        };
-
-        const getSkuId = (item: any): string | null => {
-          const id = item?.skuId || item?.regionSkuId;
-          return id != null ? String(id) : null;
-        };
-
-        const appendSku = (group: { skuSaleInfos: any[] }, skuItem: any) => {
-          const skuId = getSkuId(skuItem);
-          if (!skuId) return;
-          if (!group.skuSaleInfos.some((s) => getSkuId(s) === skuId)) {
-            group.skuSaleInfos.push(skuItem);
-          }
-        };
-
-        for (const item of skuData) {
-          const id = getSpuId(item);
-          if (!id) continue;
-
-          const existing = mergedMap.get(id) || { spuId: id, skuSaleInfos: [] };
-          const nested = item.skuInfoList || item.skuSaleInfos;
-          if (Array.isArray(nested)) {
-            nested.forEach((sku) => appendSku(existing, sku));
-          } else if (getSkuId(item)) {
-            appendSku(existing, item);
-          }
-
-          mergedMap.set(id, {
-            ...existing,
-            ...item,
-            skuSaleInfos: existing.skuSaleInfos,
-            skuInfoList: existing.skuSaleInfos,
-          });
-        }
-
-        for (const item of spuData) {
-          const id = getSpuId(item);
-          if (!id) continue;
-
-          const existing = mergedMap.get(id) || { spuId: id, skuSaleInfos: [] };
-          mergedMap.set(id, {
-            ...existing,
-            spuSaleInfo: item,
-            spuInfo: item.spuInfo || existing.spuInfo,
-            commoditySales: item.commoditySales || existing.commoditySales,
-            minPrice: item.minPrice || existing.minPrice,
-            averagePrice: item.averagePrice || existing.averagePrice,
-            marketPrice: item.marketPrice || existing.marketPrice,
-            skuSaleInfos: existing.skuSaleInfos,
-            skuInfoList: existing.skuSaleInfos,
-          });
-        }
-        return Array.from(mergedMap.values());
-      });
-
-      const regionResults = await Promise.all(regionPromises);
-      allResultsByRegion[region] = regionResults.flat().filter(Boolean);
-
-      // 지역 간 요청 시 부하 방지 지연
-      if (regions.length > 1) await new Promise(res => setTimeout(res, 800));
-    }
-
-    return { success: true, data: allResultsByRegion };
+    const data = await fetchSpuStatistics(client, spuIds, regions, { language });
+    return { success: true, data };
   } catch (error: any) {
     console.error("Poizon SPU Statistics Action Error:", error);
     return { success: false, error: error.message };

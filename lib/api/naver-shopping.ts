@@ -1,4 +1,4 @@
-import { createClerkSupabaseClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface NaverShoppingItem {
   title: string;
@@ -17,74 +17,97 @@ export interface NaverShoppingItem {
   category4: string;
 }
 
-export async function searchNaverShopping(keyword: string): Promise<{ success: boolean; data?: NaverShoppingItem[]; error?: string }> {
+export interface NaverSearchResult {
+  success: boolean;
+  data?: NaverShoppingItem[];
+  error?: string;
+}
+
+/**
+ * 메이저 종합몰 화이트리스트. 품번 하나당 한 번씩 재조회되던 것을
+ * 호출부에서 미리 로드해 재사용할 수 있도록 분리했다.
+ */
+export async function loadMallWhitelist(
+  supabase: SupabaseClient
+): Promise<Set<string> | null> {
+  const { data, error } = await supabase
+    .from("mall_whitelist")
+    .select("name")
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("Failed to fetch mall whitelist:", error);
+    return null;
+  }
+  return new Set((data ?? []).map((m: { name: string }) => m.name));
+}
+
+async function fetchNaverItems(keyword: string): Promise<NaverShoppingItem[]> {
+  const clientId = process.env.NAVER_CLIENT_ID;
+  const clientSecret = process.env.NAVER_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("네이버 API 인증 정보가 설정되지 않았습니다.");
+  }
+
+  // 키워드 정제: # 제거 및 공백 제거
+  const cleanKeyword = keyword.replace("#", "").trim();
+
+  const response = await fetch(
+    `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(cleanKeyword)}&display=100&sort=sim`,
+    {
+      headers: {
+        "X-Naver-Client-Id": clientId,
+        "X-Naver-Client-Secret": clientSecret,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(`Naver API Error: ${errorData.errorMessage || response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.items || [];
+}
+
+/**
+ * 화이트리스트 적용 후 가격 오름차순 정렬.
+ * 화이트리스트 결과가 하나도 없으면 최저가 참고용으로 원본 상위 5개를 반환한다.
+ */
+function applyMallWhitelist(
+  items: NaverShoppingItem[],
+  whitelistNames: Set<string> | null
+): NaverShoppingItem[] {
+  const byPrice = (a: NaverShoppingItem, b: NaverShoppingItem) =>
+    Number(a.lprice) - Number(b.lprice);
+
+  if (!whitelistNames) return items;
+
+  const filtered = items.filter((item) => whitelistNames.has(item.mallName));
+  if (filtered.length === 0) return items.slice(0, 5).sort(byPrice);
+
+  return filtered.sort(byPrice);
+}
+
+/**
+ * 화이트리스트를 미리 로드해 사용한다.
+ *
+ * Clerk에 의존하지 않으므로 Next 런타임 밖(백그라운드 워커)에서도 호출할 수 있다.
+ * 화이트리스트를 호출부에서 주입받기 때문에 품번 N건을 조회해도 DB 조회는 1회다.
+ */
+export async function searchNaverShoppingWithWhitelist(
+  keyword: string,
+  whitelistNames: Set<string> | null
+): Promise<NaverSearchResult> {
   try {
-    const clientId = process.env.NAVER_CLIENT_ID;
-    const clientSecret = process.env.NAVER_CLIENT_SECRET;
-
-    if (!clientId || !clientSecret) {
-      throw new Error("네이버 API 인증 정보가 설정되지 않았습니다.");
-    }
-
-    // 키워드 정제: # 제거 및 공백 제거
-    const cleanKeyword = keyword.replace("#", "").trim();
-    console.log(`[NaverSearch] 키워드 정제: ${keyword} -> ${cleanKeyword}`);
-
-    const response = await fetch(
-      `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(cleanKeyword)}&display=100&sort=sim`,
-      {
-        headers: {
-          "X-Naver-Client-Id": clientId,
-          "X-Naver-Client-Secret": clientSecret,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error(`[NaverSearch] API 오류:`, errorData);
-      throw new Error(`Naver API Error: ${errorData.errorMessage || response.statusText}`);
-    }
-
-    const data = await response.json();
-    const items: NaverShoppingItem[] = data.items || [];
-    console.log(`[NaverSearch] 검색 결과 수: ${items.length}`);
-
-    if (items.length === 0) {
-      return { success: true, data: [] };
-    }
-
-    // DB에서 화이트리스트(메이저 종합몰) 가져오기
-    const supabase = await createClerkSupabaseClient();
-    const { data: whitelist, error: dbError } = await supabase
-      .from("mall_whitelist")
-      .select("name")
-      .eq("is_active", true);
-
-    if (dbError) {
-      console.error("Failed to fetch mall whitelist:", dbError);
-      return { success: true, data: items };
-    }
-
-    const whitelistNames = new Set(whitelist.map((m) => m.name));
-    console.log(`[NaverSearch] 활성 화이트리스트:`, Array.from(whitelistNames));
-    
-    const filteredItems = items.filter((item) => whitelistNames.has(item.mallName));
-    console.log(`[NaverSearch] 필터링 후 결과 수: ${filteredItems.length}`);
-
-    // 만약 필터링 후 결과가 하나도 없다면, 상위 5개라도 보여주기 (최저가 참고용)
-    if (filteredItems.length === 0 && items.length > 0) {
-      console.log(`[NaverSearch] 필터링 결과 없음. 원본 상위 5개 사용.`);
-      const backupItems = items.slice(0, 5).sort((a, b) => Number(a.lprice) - Number(b.lprice));
-      return { success: true, data: backupItems };
-    }
-
-    // 낮은 가격순 정렬
-    const sortedItems = filteredItems.sort((a, b) => Number(a.lprice) - Number(b.lprice));
-
-    return { success: true, data: sortedItems };
+    const items = await fetchNaverItems(keyword);
+    if (items.length === 0) return { success: true, data: [] };
+    return { success: true, data: applyMallWhitelist(items, whitelistNames) };
   } catch (error: any) {
-    console.error("Naver Shopping Search Error:", error);
+    // 스택은 남기지 않는다. 대량 검색에서 품번마다 반복되면 로그를 덮어버리고,
+    // 호출부가 실패 사유를 이미 집계한다.
     return { success: false, error: error.message };
   }
 }

@@ -23,9 +23,8 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Calculator, Store } from "lucide-react";
+import { Loader2, Calculator } from "lucide-react";
 import { updateSystemSettings } from "@/app/actions/settings";
-import { MallWhitelistManager } from "./mall-whitelist-manager";
 // import { useToast } from "@/hooks/use-toast";
 
 const formSchema = z.object({
@@ -49,7 +48,6 @@ export function MarginSettingsDialog({
   initialData,
   onSuccess,
 }: MarginSettingsDialogProps) {
-  const [activeTab, setActiveTab] = React.useState<"fees" | "malls">("fees");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   // const { toast } = useToast(); // hooks/use-toast.ts가 있는지 확인 필요
 
@@ -100,24 +98,8 @@ export function MarginSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex bg-secondary/20 p-1 rounded-lg mb-4">
-          <button 
-            onClick={() => setActiveTab("fees")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-md transition-all ${activeTab === "fees" ? "bg-background shadow-sm text-primary" : "text-muted-foreground"}`}
-          >
-            <Calculator size={14} /> 수수료 설정
-          </button>
-          <button 
-            onClick={() => setActiveTab("malls")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-md transition-all ${activeTab === "malls" ? "bg-background shadow-sm text-primary" : "text-muted-foreground"}`}
-          >
-            <Store size={14} /> 쇼핑몰 관리
-          </button>
-        </div>
-
-        {activeTab === "fees" ? (
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
                 name="fee_percentage"
@@ -188,14 +170,6 @@ export function MarginSettingsDialog({
               </DialogFooter>
             </form>
           </Form>
-        ) : (
-          <div className="space-y-4">
-            <MallWhitelistManager />
-            <div className="pt-4 border-t border-secondary/10 flex justify-end">
-              <Button type="button" onClick={onClose} className="font-bold text-xs">닫기</Button>
-            </div>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );

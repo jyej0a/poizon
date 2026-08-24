@@ -75,6 +75,50 @@ export interface Database {
           created_at?: string
         }
       }
+      source_malls: {
+        Row: {
+          id: string
+          key: string
+          label: string
+          is_active: boolean
+          sort_order: number
+          notes: string | null
+          last_checked_at: string | null
+          last_check_status: "ok" | "empty" | "failed" | null
+          last_check_message: string | null
+          last_check_offer_count: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          key: string
+          label: string
+          is_active?: boolean
+          sort_order?: number
+          notes?: string | null
+          last_checked_at?: string | null
+          last_check_status?: "ok" | "empty" | "failed" | null
+          last_check_message?: string | null
+          last_check_offer_count?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          key?: string
+          label?: string
+          is_active?: boolean
+          sort_order?: number
+          notes?: string | null
+          last_checked_at?: string | null
+          last_check_status?: "ok" | "empty" | "failed" | null
+          last_check_message?: string | null
+          last_check_offer_count?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       user_configs: {
         Row: {
           user_id: string

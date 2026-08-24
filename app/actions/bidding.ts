@@ -2,10 +2,11 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
-import { PoizonClient } from "@/lib/api/poizon";
+import type { PoizonClient } from "@/lib/api/poizon";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
+import { getPoizonContext } from "@/lib/api/poizon-context";
 import {
-  fetchActiveListingsBySkuIds,
+  fetchActiveListingsBySkuIdsSafe,
   formatBidDate,
   type ParsedListingItem,
 } from "@/lib/utils/poizon-listing";
@@ -46,30 +47,8 @@ export interface ExecuteBiddingOptions {
 }
 
 async function getBiddingContext() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
-
-  const supabase = getServiceRoleClient();
-  const { data: user } = await supabase.from("users").select("id").eq("clerk_id", userId).single();
-  if (!user) throw new Error("사용자 정보를 찾을 수 없습니다.");
-
-  const { data: configData } = await supabase
-    .from("user_configs")
-    .select("poizon_app_key, poizon_app_secret, poizon_access_token")
-    .eq("user_id", user.id)
-    .single();
-
-  if (!configData?.poizon_app_key || !configData?.poizon_app_secret) {
-    throw new Error("Poizon API Key가 등록되지 않았습니다.");
-  }
-
-  const client = new PoizonClient({
-    appKey: configData.poizon_app_key,
-    appSecret: configData.poizon_app_secret,
-    ...(configData.poizon_access_token ? { accessToken: configData.poizon_access_token } : {}),
-  });
-
-  return { supabase, user, client };
+  const { userId, client } = await getPoizonContext();
+  return { supabase: getServiceRoleClient(), user: { id: userId }, client };
 }
 
 function isDuplicateListingError(err: unknown): boolean {
@@ -150,7 +129,7 @@ async function buildExistingBidFromSources(
   userInternalId: string,
   skuId: number
 ): Promise<ExistingBidInfo | null> {
-  const poizonMap = await fetchActiveListingsBySkuIds(client, [skuId]);
+  const poizonMap = await fetchActiveListingsBySkuIdsSafe(client, [skuId]);
   const poizonListing = poizonMap.get(skuId);
   if (poizonListing) return listingToExistingBid(poizonListing);
 
@@ -177,7 +156,7 @@ export async function getExistingBidsForSkus(skuIds: (string | number)[]) {
     if (numericIds.length === 0) return { success: true, data: {} as Record<string, ExistingBidInfo> };
 
     const { supabase, user, client } = await getBiddingContext();
-    const poizonMap = await fetchActiveListingsBySkuIds(client, numericIds);
+    const poizonMap = await fetchActiveListingsBySkuIdsSafe(client, numericIds);
 
     const { data: localRows } = await supabase
       .from("bid_history")
@@ -227,7 +206,7 @@ export async function getBidHistoryBySkuIds(skuIds: (string | number)[]) {
 
     if (error) throw error;
 
-    const poizonMap = await fetchActiveListingsBySkuIds(client, numericIds);
+    const poizonMap = await fetchActiveListingsBySkuIdsSafe(client, numericIds);
     const seen = new Set<number>();
     const merged: any[] = [];
 

@@ -17,7 +17,7 @@ export interface ListingFilters {
   pageSize?: number;
 }
 
-export interface ListingItem extends ParsedListingItem {}
+export type ListingItem = ParsedListingItem;
 
 /**
  * 포이즌 API에서 내 입찰/리스팅 목록을 조회합니다.

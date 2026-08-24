@@ -13,15 +13,15 @@ import {
 } from "react-icons/lu";
 import Link from "next/link";
 
-// Supabase Storage FileObject 타입 정의
+// Supabase Storage `list()` 응답 형태 (storage-js와 동일하게 optional 유지)
 interface FileObject {
   id: string;
   name: string;
-  bucket_id: string;
+  bucket_id?: string;
   owner?: string;
   created_at: string;
   updated_at: string;
-  last_accessed_at: string;
+  last_accessed_at?: string;
   metadata?: Record<string, any>;
 }
 

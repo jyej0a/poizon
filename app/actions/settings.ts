@@ -14,11 +14,13 @@ export async function savePoizonSettings(appKey: string, appSecret: string, acce
     const supabase = getServiceRoleClient();
 
     // 1. Clerk ID로 내부 테이블 users.id 획득
-    let { data: user, error: userError } = await supabase
+    const { data: existingUser, error: userError } = await supabase
       .from("users")
       .select("id")
       .eq("clerk_id", userId)
       .single();
+
+    let user = existingUser;
 
     // 동기화 실패 등의 이유로 유저가 없다면 즉시 강제로 생성(Sync)합니다.
     if (userError || !user) {

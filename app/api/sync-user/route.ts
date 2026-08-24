@@ -48,6 +48,7 @@ export async function POST() {
 
     if (error) {
       console.error("Supabase sync error:", error);
+
       return NextResponse.json(
         { 
           error: "Failed to sync user", 
@@ -64,7 +65,7 @@ export async function POST() {
     });
   } catch (error: any) {
     console.error("Sync user error:", error);
-    
+
     // 환경 변수 누락 등 초기화 오류 처리
     if (error.message?.includes("environment variables") || error.message?.includes("missing")) {
       return NextResponse.json(

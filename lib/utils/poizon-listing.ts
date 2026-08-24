@@ -104,3 +104,20 @@ export async function fetchActiveListingsBySkuIds(
 
   return result;
 }
+
+/**
+ * listing/list 혼잡·타임아웃 시 빈 맵을 반환한다.
+ * 입찰 이력 표시는 로컬 DB로 폴백할 수 있게 한다.
+ */
+export async function fetchActiveListingsBySkuIdsSafe(
+  client: PoizonClient,
+  skuIds: number[]
+): Promise<Map<number, ParsedListingItem>> {
+  try {
+    return await fetchActiveListingsBySkuIds(client, skuIds);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn("[fetchActiveListingsBySkuIds] fallback to local:", msg.slice(0, 200));
+    return new Map();
+  }
+}
