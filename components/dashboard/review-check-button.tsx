@@ -1,6 +1,8 @@
 "use client";
 
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, CircleDot } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ICON_PRESS } from "@/lib/utils/motion";
 
 export type ReviewCheckState = "none" | "partial" | "all";
 
@@ -31,6 +33,8 @@ export function ReviewCheckButton({
         ? `일부 검토완료${partialLabel ? ` (${partialLabel})` : ""} · 클릭 시 전체 완료`
         : "검토완료로 표시";
 
+  const Icon = state === "partial" ? CircleDot : CheckCircle2;
+
   return (
     <button
       type="button"
@@ -39,9 +43,10 @@ export function ReviewCheckButton({
         onClick();
       }}
       title={title}
-      className={`p-1 rounded-full transition-all ${STATE_STYLES[state]}`}
+      aria-label={title}
+      className={cn("p-1 rounded-full transition-all", STATE_STYLES[state], ICON_PRESS)}
     >
-      <CheckCircle2 size={size} strokeWidth={state === "partial" ? 2.25 : 2} />
+      <Icon size={size} strokeWidth={state === "partial" ? 2.25 : 2} />
     </button>
   );
 }

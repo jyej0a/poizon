@@ -34,13 +34,15 @@ Every POST request payload must include these fields, unless using a wrapped cli
 ## 💰 CATEGORY 2: Listing & Inventory (Bidding Control)
 
 ### 2.1 Submit Automatic Bidding (Follow-up Bidding)
-- **Endpoint**: `POST /dop/api/v1/pop/api/v1/follow-bidding/submit`
+- **Endpoint**: `POST /dop/api/v1/pop/api/v1/auto-follow-bidding/submit`
 - **Purpose**: Creates an automated pricing bot for an *existing* listing. (Changes price when competitors drop).
-- **Core Parameters**: `biddingNo` (Required), `lowestPrice`, `followType` (3, 4, 5, 6), `autoSwitch` (True/False), `countryCode`, `currency`.
+- **Core Parameters**: `biddingNo` / `sellerBiddingNo`, `lowestPrice`, `followType` (3, 4, 5, 6), `autoSwitch`, `countryCode`, `currency`.
+- **Note**: 구 `follow-bidding/submit` 은 실데이터 404.
 
 ### 2.2 Query Automatic Follow-Up Bidding List
 - **Endpoint**: `POST /dop/api/v1/pop/api/v1/auto-follow-bidding/list`
 - **Purpose**: Retrieves all automated bidding configurations for the seller.
+- **Note**: 실데이터에서 500(system busy)이 날 수 있음. cancel 계열은 404.
 
 ### 2.3 Manual Listing (Normal) / Submit Bid **[Primary Initial Bid Action]**
 - **Endpoint**: `POST /dop/api/v1/pop/api/v1/submit-bid/normal-autonomous-bidding`
@@ -64,8 +66,42 @@ Every POST request payload must include these fields, unless using a wrapped cli
 - **Core Parameters**: `sellerBiddingNo`
 
 ### 2.5 Query Listing List
-- **Endpoint**: `POST /dop/api/v1/pop/api/v1/listing/list`
-- **Purpose**: Views all active, pending, or inactive bids/listings.
+- **Endpoint**: `POST /dop/api/v1/pop/api/v1/retrieve-bid/general-type-bidding-list`
+- **Docs**: https://open.poizon.com/doc/list/apiDetail/51
+- **Purpose**: Seller listing list (Ship-to-Verify / Pre-sale / Consignment / Direct).
+- **Core Parameters**: `tradeStatus` (0 in transaction · 1 canceled · 2 listing successful · 3 sell out), `biddingType` (20 / 25 / 27), `saleType` (0 Ship-to-Verify · 7 Pre-sale), `exclusiveStartOffsetId` (0 first page), `pageSize` (max 100), `region`, `language`, `timeZone`. Optional `sellerBiddingNoList`.
+- **Pagination**: response `data.lastOffsetId` → next `exclusiveStartOffsetId`. No total count.
+- **Response `data.list[]`**: `sellerBiddingNo`, `skuId`/`globalSkuId`, `spuId`/`globalSpuId`, `spuTitle`, `price`, `quantity`, `onSaleQuantity`, `tradeStatus`, `exposureItemList[]` (`region`, `exposureEnabled`), `regionSalePvInfoList` (size/color), `createTime`.
+- **Note**: 구 `POST /dop/api/v1/pop/api/v1/listing/list` 는 실데이터 404. 쓰지 않음.
+
+### 2.6 Update Manual Listing (Ship-to-verify)
+- **Endpoint**: `POST /dop/api/v1/pop/api/v1/update-bid/normal-autonomous-bidding`
+- **Purpose**: Change price/qty of an existing Ship-to-Verify listing without cancel+resubmit.
+- **Core Parameters**: `requestId` (UUID), `sellerBiddingNo`, `skuId`, `price`, `quantity`, plus the same country/currency/size/biddingType/saleType fields as submit.
+
+---
+
+## 📦 CATEGORY 3: Order (체결 후 주문)
+
+### 3.1 Order List (by type)
+- **Endpoint**: `POST /dop/api/v1/pop/api/v1/order/generic_list`
+- **Docs**: https://open.poizon.com/doc/list/apiDetail/102
+- **Purpose**: Seller order list. `skuId`/`spuId` in this API are **global** product IDs.
+- **Window**: `start_created` / `end_created` (`yyyy-MM-dd HH:mm:ss`), **max 7 days per call**. Longer ranges are split client-side (cap 90 days).
+- **Core Parameters**: `order_type` (`NORMAL_SALE` / `CONSIGN` / `PRE_SALE` / `DIRECT`), `order_status`, `page_no`, `page_size`, `order_by_create_time_desc`, `language`, `timeZone`.
+- **Status (order_status)**:
+  - `1000` pending payment · `2000` paid / seller to ship · `2100` seller shipped
+  - `2200` platform received · `2500` QC done · `2550` waiting platform ship · `2600` platform shipped
+  - `2650`~`3040` in transit / waiting buyer · `4000` success
+  - `7000` failed · `8000`/`8010` closed · `8080` refund + return
+- **Response `data.orders[]`**: `order_no`, `order_type`, `order_status`, `pay_status`, `pay_time`, `amount`, `pay_amount`, `sku_id`, …
+
+### 3.2 Ship Order
+- **Endpoint**: `POST /dop/api/v1/pop/api/v1/order/delivery`
+- **Docs**: https://open.poizon.com/doc/list/apiDetail/100
+- **Purpose**: Mark an order as shipped (Ship-to-Verify: seller ships to POIZON inspection).
+- **Core Parameters**: `order_no`, carrier id, tracking no, `delivery_method` (`OFFLINE_EXPRESS_DELIVERY` / `SELF_DELIVERY` / `ONLINE_EXPRESS_DELIVERY`). Documented IDs: UPS 7, FedEx 8, USPS 9, YAMATO 10, SAGAWA 11, DHL 22, Self 100. 「Get Supported Shipping Carriers」 후보는 실데이터 404.
+- **QC**: `Query Order QC Result` 후보는 실데이터 404. 목록 `identifyType` / `onlineIdentifyStatus` 사용.
 
 ## Final Conclusion on Error [80000014: Authentication not supported for this item]
 Based on the full API spec, the `80000014` error occurs when using the `direct-autonomous-bidding` endpoint as an international (KR) seller without specific direct-shipping authentication. 

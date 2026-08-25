@@ -347,12 +347,14 @@ export async function executeBidding(bids: BidPayload[], options: ExecuteBidding
             bid.spuId ? Number(bid.spuId) : undefined
           );
 
-          const first = updateResult.data?.[0];
           results.push({
             skuId: bid.skuId,
             success: !!updateResult.success,
-            message: first?.message || updateResult.error || (updateResult.success ? "가격 변경 재입찰 성공" : "가격 변경 재입찰 실패"),
-            data: first?.data,
+            message:
+              updateResult.message ||
+              updateResult.error ||
+              (updateResult.success ? "가격 변경 성공" : "가격 변경 실패"),
+            data: updateResult.data,
           });
           continue;
         }

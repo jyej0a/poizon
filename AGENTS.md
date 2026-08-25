@@ -51,8 +51,6 @@ pnpm lint
      - 서버 사이드에서 Clerk 인증 사용
    - `service-role.ts`: 관리자 권한 작업용 (SUPABASE_SERVICE_ROLE_KEY 사용)
      - RLS 우회, 서버 사이드 전용
-   - `client.ts`: 인증 불필요한 공개 데이터용
-     - anon key만 사용, RLS 정책이 `to anon`인 데이터만 접근
 
 3. **사용자 동기화**:
    - `hooks/use-sync-user.ts`: Clerk → Supabase 사용자 동기화 훅
@@ -147,6 +145,9 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_STORAGE_BUCKET=uploads
+
+# Search worker cron (Vercel Cron /api/cron/search-worker)
+CRON_SECRET=
 ```
 
 ## Development Guidelines
@@ -195,13 +196,14 @@ const searchParams = await props.searchParams;
 
 - `middleware.ts`: Clerk 미들웨어 (인증 라우트 보호)
 - `app/layout.tsx`: RootLayout with ClerkProvider + SyncUserProvider
-- `lib/supabase.ts`: 레거시 Supabase 클라이언트 (사용 지양, 새 파일들 사용)
+- `lib/supabase/`: Clerk/서버/service-role 클라이언트 (`clerk-client.ts`, `server.ts`, `service-role.ts`)
 - `components.json`: shadcn/ui 설정
 
 ## Additional Cursor Rules
 
 프로젝트에는 다음 Cursor 규칙들이 있습니다:
 
+- `.cursor/rules/docs-sync.mdc`: 스펙 변경 시 `docs/PRD.md`·`docs/TODO.md` 선행 갱신
 - `.cursor/rules/web/nextjs-convention.mdc`: Next.js 컨벤션
 - `.cursor/rules/web/design-rules.mdc`: UI/UX 디자인 가이드
 - `.cursor/rules/web/playwright-test-guide.mdc`: 테스트 가이드

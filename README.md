@@ -282,10 +282,6 @@ pnpm dev
 
 브라우저에서 [http://localhost:3000](http://localhost:3000)을 열어 확인합니다.
 
-**테스트 페이지:**
-- `/auth-test`: Clerk + Supabase 인증 통합 테스트
-- `/storage-test`: Supabase Storage 업로드 테스트
-
 ### 개발 명령어
 
 ```bash
@@ -356,8 +352,6 @@ saas-template/
 ├── app/                    # Next.js App Router
 │   ├── api/               # API Routes
 │   │   └── sync-user/    # Clerk → Supabase 사용자 동기화
-│   ├── auth-test/        # 인증 테스트 페이지
-│   ├── storage-test/     # 스토리지 테스트 페이지
 │   ├── layout.tsx        # Root Layout (Clerk Provider)
 │   ├── page.tsx          # 홈페이지
 │   └── globals.css       # 전역 스타일 (Tailwind v4 설정)
@@ -372,8 +366,7 @@ saas-template/
 │   ├── supabase/         # Supabase 클라이언트들
 │   │   ├── clerk-client.ts    # Client Component용
 │   │   ├── server.ts          # Server Component용
-│   │   ├── service-role.ts    # 관리자용
-│   │   └── client.ts          # 공개 데이터용
+│   │   └── service-role.ts    # 관리자용
 │   └── utils.ts          # 공통 유틸리티 (cn 함수 등)
 │
 ├── hooks/                 # Custom React Hooks

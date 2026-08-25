@@ -1,3 +1,5 @@
+import { abcMartProvider } from "@/lib/sourcing/providers/abcmart";
+import { twentyNineCmProvider } from "@/lib/sourcing/providers/29cm";
 import { elandMallProvider } from "@/lib/sourcing/providers/elandmall";
 import { gmarketProvider } from "@/lib/sourcing/providers/gmarket";
 import { kolonMallProvider } from "@/lib/sourcing/providers/kolonmall";
@@ -6,6 +8,7 @@ import { lotteDepartmentProvider, lotteOnProvider } from "@/lib/sourcing/provide
 import { musinsaProvider } from "@/lib/sourcing/providers/musinsa";
 import { nikeKrProvider } from "@/lib/sourcing/providers/nike";
 import { ssgProvider } from "@/lib/sourcing/providers/ssg";
+import { wconceptProvider } from "@/lib/sourcing/providers/wconcept";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 import type { SourceMallReliability } from "@/types/source-mall";
 
@@ -68,6 +71,24 @@ export const SOURCE_MALL_DEFINITIONS: SourceMallDefinition[] = [
     homepage: "https://www.elandmall.com",
     reliability: "ok",
     notes: "검색 HTML 상품 카드 파싱",
+  },
+  {
+    provider: abcMartProvider,
+    homepage: "https://abcmart.a-rt.com",
+    reliability: "ok",
+    notes: "검색 AJAX result/list + 상품 info 스타일/컬러 검증. 채널 10001·10002",
+  },
+  {
+    provider: twentyNineCmProvider,
+    homepage: "https://www.29cm.co.kr",
+    reliability: "ok",
+    notes: "display-bff POST listing/items (pageType=SRP). 검색 HTML에는 오퍼 없음",
+  },
+  {
+    provider: wconceptProvider,
+    homepage: "https://www.wconcept.co.kr",
+    reliability: "ok",
+    notes: "api-display 검색. DISPLAY-API-KEY는 검색 페이지 runtimeConfig 공개값",
   },
   {
     provider: gmarketProvider,

@@ -54,8 +54,8 @@ function textValue(value: unknown): string | null {
 function collectViewModels(data: GmarketNextData): GmarketViewModel[] {
   const modules = data.props?.pageProps?.initialStates?.curatorData?.regionsData?.content?.modules ?? [];
   const models: GmarketViewModel[] = [];
-  for (const module of modules) {
-    for (const row of module.rows ?? []) {
+  for (const contentModule of modules) {
+    for (const row of contentModule.rows ?? []) {
       if (row.viewModel?.commonItemInfo?.item) models.push(row.viewModel);
     }
   }

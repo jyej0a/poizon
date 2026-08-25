@@ -69,6 +69,16 @@ export function resolveSkuId(
   return String(id);
 }
 
+export function getChildSkuIds(item: { skuDetails?: SearchSkuDetail[] } | null | undefined): string[] {
+  const ids = (item?.skuDetails || []).map(resolveSkuId).filter(Boolean);
+  return [...new Set(ids)];
+}
+
+export function pushSearchItemFromRaw(rawData: unknown, targetArray: SearchItem[], term: string) {
+  const item = buildSearchItem(rawData, term);
+  if (item) targetArray.push(item);
+}
+
 export function getSpuKeyFromItem(item: { id?: string | number }): string {
   return String(item.id ?? "").replace(/[^0-9]/g, "");
 }

@@ -9,6 +9,8 @@ export interface SkuStatus {
   handled: boolean;
   handledDate: string | null;
   handledAt: string | null;
+  watchPrice: number | null;
+  watchAt: string | null;
   updatedAt: string | null;
 }
 
@@ -23,5 +25,7 @@ export const EMPTY_SKU_STATUS: SkuStatus = {
   handled: false,
   handledDate: null,
   handledAt: null,
+  watchPrice: null,
+  watchAt: null,
   updatedAt: null,
 };

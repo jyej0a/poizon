@@ -27,6 +27,7 @@ export function StockStatusIndicator({
     <div
       className={`relative group/stock-mark ${interactive ? "cursor-pointer" : "cursor-help"}`}
       title={tooltip}
+      aria-label={tooltip}
       onClick={interactive ? onClick : undefined}
       onKeyDown={
         interactive
@@ -38,7 +39,7 @@ export function StockStatusIndicator({
             }
           : undefined
       }
-      role={interactive ? "button" : undefined}
+      role={interactive ? "button" : "img"}
       tabIndex={interactive ? 0 : undefined}
     >
       <div
@@ -66,6 +67,7 @@ export function StockStatusIndicator({
   const badgeEl = showBadge && (
     <span
       title={tooltip}
+      aria-label={tooltip}
       onClick={interactive ? onClick : undefined}
       onKeyDown={
         interactive

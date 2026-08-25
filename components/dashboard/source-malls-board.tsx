@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   ExternalLink,
   HelpCircle,
   Loader2,
@@ -241,7 +242,10 @@ export function SourceMallsBoard() {
       return;
     }
     const keys = filteredMalls.filter((mall) => mall.hasParser).map((mall) => mall.key);
-    if (keys.length === 0) return;
+    if (keys.length === 0) {
+      alert("점검 가능한 파서가 없습니다.");
+      return;
+    }
 
     setIsProbingAll(true);
     withProbing(keys, true);
@@ -258,11 +262,48 @@ export function SourceMallsBoard() {
           return probe ? applyProbeToMall(mall, probe) : mall;
         })
       );
-      const ok = res.data.filter((item) => item.status === "ok").length;
-      const empty = res.data.filter((item) => item.status === "empty").length;
       const failed = res.data.filter((item) => item.status === "failed").length;
       setLastProbeNote(
-        `전체 점검 완료 — 오퍼 있음 ${ok} · 없음 ${empty} · 실패 ${failed} (품번 ${article})`
+        `전체 ${keys.length}개 점검 완료 — 실패 ${failed}건 (품번 ${article})`
+      );
+    } finally {
+      withProbing(keys, false);
+      setIsProbingAll(false);
+    }
+  };
+
+  const handleProbeStale = async () => {
+    const article = probeArticle.trim();
+    if (!article) {
+      alert("점검할 품번을 입력하세요.");
+      return;
+    }
+    const keys = filteredMalls
+      .filter((mall) => mall.hasParser && (!mall.last_checked_at || isStale(mall.last_checked_at)))
+      .map((mall) => mall.key);
+    if (keys.length === 0) {
+      alert("미점검이거나 24시간 이상 지난 몰이 없습니다.");
+      return;
+    }
+
+    setIsProbingAll(true);
+    withProbing(keys, true);
+    try {
+      const res = await checkAllSourceMalls(article, keys);
+      if (!res.success || !res.data) {
+        alert(res.error ?? "오래된 몰 점검에 실패했습니다.");
+        return;
+      }
+      const byKey = new Map(res.data.map((item) => [item.key, item]));
+      setMalls((prev) =>
+        prev.map((mall) => {
+          const probe = byKey.get(mall.key);
+          return probe ? applyProbeToMall(mall, probe) : mall;
+        })
+      );
+      const failed = res.data.filter((item) => item.status === "failed").length;
+      setLastProbeNote(
+        `오래된/미점검 ${keys.length}개 점검 완료 — 실패 ${failed}건 (품번 ${article})`
       );
     } finally {
       withProbing(keys, false);
@@ -297,7 +338,7 @@ export function SourceMallsBoard() {
 
   return (
     <div className="h-full flex flex-col gap-4 p-2 w-full animate-in fade-in duration-300">
-      <div className="bg-card border border-secondary/40 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+      <div className="glass-panel border border-secondary/40 rounded-xl p-5 flex flex-col gap-4">
         <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
@@ -406,11 +447,26 @@ export function SourceMallsBoard() {
             <button
               type="button"
               onClick={() => void handleProbeAll()}
-              disabled={isProbingAll || filteredMalls.length === 0}
+              disabled={isProbingAll || filteredMalls.every((mall) => !mall.hasParser)}
               className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               {isProbingAll ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
               전체 점검
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleProbeStale()}
+              disabled={
+                isProbingAll ||
+                filteredMalls.every(
+                  (mall) =>
+                    !mall.hasParser || (mall.last_checked_at != null && !isStale(mall.last_checked_at))
+                )
+              }
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-secondary/40 hover:bg-secondary disabled:opacity-50 transition-colors"
+            >
+              {isProbingAll ? <Loader2 size={13} className="animate-spin" /> : <Clock size={13} />}
+              오래된만
             </button>
             <button
               type="button"
@@ -463,6 +519,12 @@ export function SourceMallsBoard() {
               <li>
                 점검 품번으로 「연결 점검」→ <strong className="text-foreground">오퍼 있음</strong> 확인 후 활성 유지
               </li>
+              <li>
+                배포 전/후 회귀 확인:{" "}
+                <code className="text-[11px] bg-secondary/40 px-1 rounded">pnpm check:offers</code>
+                (실패 시 exit 1 · DB 반영은{" "}
+                <code className="text-[11px] bg-secondary/40 px-1 rounded">--write-db</code>)
+              </li>
             </ol>
           )}
         </div>
@@ -474,7 +536,7 @@ export function SourceMallsBoard() {
         </div>
       )}
 
-      <div className="flex-1 bg-card border border-secondary/40 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      <div className="flex-1 glass-panel border border-secondary/40 rounded-xl overflow-hidden flex flex-col">
         {isLoading ? (
           <div className="flex-1 grid place-items-center py-24">
             <Loader2 size={24} className="animate-spin text-primary" />

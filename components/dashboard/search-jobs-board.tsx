@@ -93,7 +93,7 @@ function ProgressBar({ job }: { job: SearchJob }) {
 
 export function SearchJobsBoard() {
   const router = useRouter();
-  const { jobs, isLoading, error, refresh, markSeen, markAllSeen, activeCount } = useSearchJobs();
+  const { jobs, isLoading, error, refresh, markSeen, markAllSeen, activeCount, runningCount, unclaimedCount } = useSearchJobs();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -115,7 +115,7 @@ export function SearchJobsBoard() {
 
   return (
     <div className="h-full flex flex-col gap-4 p-2 w-full animate-in fade-in duration-300">
-      <div className="bg-card border border-secondary/40 rounded-xl p-5 shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+      <div className="glass-panel border border-secondary/40 rounded-xl p-5 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
             <Inbox size={22} />
@@ -123,18 +123,28 @@ export function SearchJobsBoard() {
           <div>
             <h2 className="text-lg font-black tracking-tight text-foreground">검색 작업</h2>
             <p className="text-sm text-muted-foreground">
-              검색은 서버에서 진행됩니다. 창을 닫아도 계속되고, 완료 후 결과를 한 번에 불러올 수 있습니다.
+              화면을 닫아도 워커가 손 안 댄 품번을 최대 500개까지 모읍니다. 진행 중이어도 지금까지 모인 결과를 바로 볼 수 있습니다.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {activeCount > 0 && (
+          {runningCount > 0 ? (
             <span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-blue-500/10 px-3 py-1.5 rounded-lg">
               <Loader2 size={13} className="animate-spin" />
-              {activeCount}건 진행 중
+              {runningCount}건 진행 중
             </span>
-          )}
+          ) : unclaimedCount > 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-500/10 px-3 py-1.5 rounded-lg">
+              <Clock size={13} />
+              {unclaimedCount}건 대기 (워커 없음)
+            </span>
+          ) : activeCount > 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-blue-500/10 px-3 py-1.5 rounded-lg">
+              <Clock size={13} />
+              {activeCount}건 대기
+            </span>
+          ) : null}
           <button
             type="button"
             onClick={markAllSeen}
@@ -159,7 +169,18 @@ export function SearchJobsBoard() {
         </div>
       )}
 
-      <div className="flex-1 bg-card border border-secondary/40 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      {unclaimedCount > 0 && (
+        <div className="bg-amber-500/8 border border-amber-500/25 text-amber-800 rounded-xl px-4 py-3 text-sm">
+          <p className="font-bold">대기 중인 검색을 집어갈 워커가 없습니다.</p>
+          <p className="text-[13px] mt-1 leading-relaxed text-amber-800/80">
+            로컬은 터미널에서 <code className="font-mono font-bold">pnpm worker</code>를 켜 두세요.
+            <code className="font-mono">pnpm dev</code>만으로는 큐가 진행되지 않습니다.
+            배포 환경은 Vercel Cron과 <code className="font-mono">CRON_SECRET</code>을 확인하세요.
+          </p>
+        </div>
+      )}
+
+      <div className="flex-1 glass-panel border border-secondary/40 rounded-xl overflow-hidden flex flex-col">
         {isLoading ? (
           <div className="flex-1 grid place-items-center py-24">
             <Loader2 size={24} className="animate-spin text-primary" />
@@ -267,6 +288,7 @@ export function SearchJobsBoard() {
                                 }
                                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-40"
                                 title="취소"
+                                aria-label="검색 작업 취소"
                               >
                                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
                               </button>
@@ -279,6 +301,7 @@ export function SearchJobsBoard() {
                                 onClick={() => void runAction(job.id, () => retrySearchJob(job.id))}
                                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors disabled:opacity-40"
                                 title="다시 실행"
+                                aria-label="검색 작업 다시 실행"
                               >
                                 {busy ? (
                                   <Loader2 size={14} className="animate-spin" />
@@ -292,11 +315,12 @@ export function SearchJobsBoard() {
                               type="button"
                               disabled={busy}
                               onClick={() => {
-                                if (!confirm("이 검색 작업과 결과를 삭제할까요?")) return;
+                                if (!confirm("이 검색 작업과 모아 둔 상품 목록을 삭제할까요?\n검토·메모 기록은 남지만, 사진과 가격은 다시 불러올 수 없습니다.")) return;
                                 void runAction(job.id, () => deleteSearchJob(job.id));
                               }}
                               className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-40"
                               title="삭제"
+                              aria-label="검색 작업 삭제"
                             >
                               <Trash2 size={14} />
                             </button>
@@ -307,6 +331,7 @@ export function SearchJobsBoard() {
                                 onClick={() => setExpandedId(expanded ? null : job.id)}
                                 className="p-1.5 rounded-lg hover:bg-secondary text-amber-600 transition-colors"
                                 title="상세 사유"
+                                aria-label="검색 작업 상세 사유"
                               >
                                 <AlertTriangle size={14} />
                               </button>

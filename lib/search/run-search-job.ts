@@ -1,11 +1,10 @@
 /**
  * 백그라운드 검색 잡의 실제 수집 파이프라인 (서버 전용).
  *
- * 기존에는 `search-board.tsx`의 `handleSearch`가 브라우저에서 전 과정을 `await`했기 때문에
- * 브랜드 50건 검색이 20~60초간 화면을 잠갔고, 이탈하면 결과가 전량 소실됐다.
- * 동일한 단계를 서버에서 수행하고 결과를 DB에 적재한다.
+ * 브랜드는 API 페이지 단위로 한 청크씩 처리한다. 워커가 페이지를 넘기며
+ * 손 안 댄 품번을 최대 500개까지 적재한다.
  *
- * 단계: 상품 조회 → 통계(KR/CN) → 아이템 변환 → 제외 필터 → 외부 소싱 오퍼
+ * 단계: 상품 조회 → 통계(KR/CN) → 아이템 변환 → 손댄 품번 제외 → 원가 오퍼·노출가
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -15,12 +14,8 @@ import {
   fetchItemByArticleNumber,
   fetchSpuStatistics,
 } from "@/lib/api/poizon-search";
-import { mapWithConcurrency, withRetry } from "@/lib/api/retry";
-import {
-  fetchTopSourceOffers,
-  filterOffersByActiveSources,
-} from "@/lib/sourcing/source-offers";
-import { loadActiveSourceProviders } from "@/lib/sourcing/source-malls";
+import { mapWithConcurrency } from "@/lib/api/retry";
+import { fetchPricesForItems, type EnrichedSearchItem } from "@/lib/search/item-prices";
 import {
   applyStatsToItemData,
   buildSearchItem,
@@ -30,21 +25,15 @@ import {
   type SearchItem,
 } from "@/lib/search/search-item";
 import { filterItems, loadExclusionContext } from "@/lib/search/exclusion";
+import { getCachedSpuStats, setCachedSpuStats } from "@/lib/search/search-cache";
 import {
-  getCachedSourceOffers,
-  getCachedSpuStats,
-  setCachedSourceOffers,
-  setCachedSpuStats,
-} from "@/lib/search/search-cache";
-import type { SearchJobOptions, SearchJobType, SourceOfferItemStatus } from "@/types/search-job";
-import type { SourceOffer, SourceOfferStatus } from "@/types/source-offer";
+  SEARCH_JOB_BRAND_PAGE_SIZE,
+  SEARCH_JOB_MAX_ITEMS,
+  type SearchJobOptions,
+  type SearchJobType,
+} from "@/types/search-job";
 
-/** 품번 동시 조회 수. POIZON 부하와 총 소요시간의 균형점 */
 const ARTICLE_CONCURRENCY = 5;
-/**
- * 외부 소싱 오퍼 동시 조회 수.
- */
-const SOURCE_OFFER_CONCURRENCY = 3;
 
 export interface SearchJobSpec {
   id: string;
@@ -62,32 +51,27 @@ export interface ProgressUpdate {
 export interface RunSearchJobDeps {
   supabase: SupabaseClient;
   poizon: PoizonClient;
-  /** public.users.id (Clerk ID 아님) */
   userId: string;
   onProgress?: (update: ProgressUpdate) => Promise<void> | void;
   onWarning?: (message: string) => void;
+  /** 이미 적재된 건수. 500 상한 계산에 사용 */
+  alreadyKept?: number;
 }
 
-export interface EnrichedSearchItem {
-  item: SearchItem;
-  sourceOffers: SourceOffer[];
-  offerStatus: SourceOfferItemStatus;
-}
+export type { EnrichedSearchItem };
 
-export interface SearchJobOutcome {
+export interface SearchJobChunkOutcome {
   items: EnrichedSearchItem[];
   excludedCount: number;
   warnings: string[];
   brandTotal: number | null;
   brandId: number | string | null;
+  /** 다음에 칠 브랜드 페이지. 카탈로그가 끝났으면 현재 페이지 */
+  nextBrandPage: number;
+  /** 더 가져올 페이지가 없음 (빈 페이지 또는 품번 검색 완료) */
+  catalogEnded: boolean;
 }
 
-/**
- * 같은 사유의 실패를 하나로 묶는다.
- *
- * 외부 소싱 수집이 죽어 있으면 50건 검색에서 동일한 경고가 50개 쌓이고 로그도 그만큼 반복된다.
- * 사유별로 건수와 예시 몇 개만 남겨 진단에 필요한 정보는 유지하면서 부피를 줄인다.
- */
 function createWarningCollector(onWarning?: (message: string) => void) {
   const groups = new Map<string, { count: number; samples: string[] }>();
 
@@ -97,8 +81,6 @@ function createWarningCollector(onWarning?: (message: string) => void) {
       group.count += 1;
       if (target && group.samples.length < 3) group.samples.push(target);
       groups.set(reason, group);
-
-      // 로그는 사유당 1회만 (반복 출력이 실제 원인을 덮는다)
       if (group.count === 1) onWarning?.(target ? `${reason} (${target})` : reason);
     },
     summarize(): string[] {
@@ -110,18 +92,78 @@ function createWarningCollector(onWarning?: (message: string) => void) {
         return `${reason} · ${group.count}건${samples}`;
       });
     },
-    get isEmpty() {
-      return groups.size === 0;
-    },
   };
 }
 
-export async function runSearchJob(
+async function applyStatistics(
+  specId: string,
+  supabase: SupabaseClient,
+  poizon: PoizonClient,
+  rawEntries: Array<{ data: any; term: string }>,
+  warnings: ReturnType<typeof createWarningCollector>,
+  reporter: { onRetry: (context: string, error: unknown, attempt: number) => void }
+) {
+  const spuIdsForStats = rawEntries
+    .map((entry) => Number(entry.data.spuInfo?.spuId || entry.data.spuId || entry.data.goodsId))
+    .filter((id) => !!id && !Number.isNaN(id));
+
+  if (spuIdsForStats.length === 0) return;
+
+  const [{ hits: cachedStatsKR, missing: missingKR }, { hits: cachedStatsCN, missing: missingCN }] =
+    await Promise.all([
+      getCachedSpuStats(supabase, spuIdsForStats, "KR"),
+      getCachedSpuStats(supabase, spuIdsForStats, "CN"),
+    ]);
+
+  const [fetchedStatsKR, fetchedStatsCN] = await Promise.all([
+    missingKR.length > 0
+      ? fetchSpuStatistics(poizon, missingKR, ["KR"], {
+          reporter,
+          onChunkError: (context, error) =>
+            warnings.add(`${context}: ${error instanceof Error ? error.message : String(error)}`),
+        }).catch((error) => {
+          warnings.add(`KR 통계 조회 실패: ${error instanceof Error ? error.message : String(error)}`);
+          return {} as Record<string, any[]>;
+        })
+      : Promise.resolve({} as Record<string, any[]>),
+    missingCN.length > 0
+      ? fetchSpuStatistics(poizon, missingCN, ["CN"], {
+          reporter,
+          onChunkError: () => {},
+        }).catch(() => {
+          return {} as Record<string, any[]>;
+        })
+      : Promise.resolve({} as Record<string, any[]>),
+  ]);
+
+  await Promise.all([
+    setCachedSpuStats(supabase, "KR", fetchedStatsKR),
+    setCachedSpuStats(supabase, "CN", fetchedStatsCN),
+  ]);
+
+  const statsKR = { ...cachedStatsKR, ...fetchedStatsKR };
+  const statsCN = { ...cachedStatsCN, ...fetchedStatsCN };
+  const { statsMapKR, statsMapCN } = buildStatsMaps(
+    { success: true, data: statsKR },
+    { success: true, data: statsCN }
+  );
+
+  rawEntries.forEach((entry) => applyStatsToItemData(entry.data, statsMapKR, statsMapCN));
+  void specId;
+}
+
+/**
+ * 한 청크(브랜드 1페이지 또는 품번 목록)를 수집한다.
+ */
+export async function runSearchJobChunk(
   spec: SearchJobSpec,
   deps: RunSearchJobDeps
-): Promise<SearchJobOutcome> {
+): Promise<SearchJobChunkOutcome> {
   const { supabase, poizon, userId, onProgress } = deps;
   const warnings = createWarningCollector(deps.onWarning);
+  const alreadyKept = deps.alreadyKept ?? 0;
+  const maxItems = spec.options.maxItems ?? SEARCH_JOB_MAX_ITEMS;
+  const remaining = Math.max(0, maxItems - alreadyKept);
 
   const reporter = {
     onRetry: (context: string, error: unknown, attempt: number) => {
@@ -131,11 +173,17 @@ export async function runSearchJob(
   };
 
   const options: SearchJobOptions = spec.options ?? {};
-  let brandTotal: number | null = null;
+  let brandTotal: number | null = options.brandTotal ?? null;
   let brandId: number | string | null = options.brandId ?? null;
+  const pageNum = options.brandPage ?? 1;
+  let catalogEnded = spec.type === "article";
+  let nextBrandPage = pageNum;
 
-  // 1) 상품 조회
-  await onProgress?.({ stage: "상품 조회" });
+  await onProgress?.({
+    stage: spec.type === "brand" ? `상품 조회 p.${pageNum}` : "상품 조회",
+    progressTotal: maxItems,
+    progressDone: alreadyKept,
+  });
 
   const rawEntries: Array<{ data: any; term: string }> = [];
 
@@ -143,9 +191,14 @@ export async function runSearchJob(
     const terms = spec.keyword
       .split(",")
       .map((k) => k.trim())
-      .filter((k) => k.length > 0);
+      .filter((k) => k.length > 0)
+      .slice(0, maxItems);
 
-    await onProgress?.({ stage: "상품 조회", progressTotal: terms.length, progressDone: 0 });
+    await onProgress?.({
+      stage: "상품 조회",
+      progressTotal: maxItems,
+      progressDone: alreadyKept,
+    });
 
     let done = 0;
     const results = await mapWithConcurrency(terms, ARTICLE_CONCURRENCY, async (term) => {
@@ -160,7 +213,7 @@ export async function runSearchJob(
         return { term, res: null };
       } finally {
         done += 1;
-        await onProgress?.({ progressDone: done });
+        await onProgress?.({ progressDone: alreadyKept });
       }
     });
 
@@ -172,7 +225,6 @@ export async function runSearchJob(
       if (itemData) {
         rawEntries.push({ data: itemData, term });
       } else {
-        // 호출은 성공했으나 매칭되는 상품이 없는 경우. 어느 품번이 비었는지 알려준다.
         warnings.add("조회 결과 없음", term);
       }
     }
@@ -181,166 +233,85 @@ export async function runSearchJob(
       throw new Error("검색 결과가 없습니다. 품번을 확인해 주세요.");
     }
   } else {
-    const pageNum = options.brandPage ?? 1;
-    const pageSize = options.pageSize ?? 20;
-
-    const brandRes = await fetchBrandSpus(
-      poizon,
-      spec.keyword,
-      pageNum,
-      pageSize,
-      brandId,
-      reporter
-    );
+    const pageSize = SEARCH_JOB_BRAND_PAGE_SIZE;
+    const brandRes = await fetchBrandSpus(poizon, spec.keyword, pageNum, pageSize, brandId, reporter);
     brandTotal = brandRes.total;
     brandId = brandRes.brandId;
 
     const results = extractBrandResultsFromResponse(brandRes.data);
     if (results.length === 0) {
-      return { items: [], excludedCount: 0, warnings: warnings.summarize(), brandTotal, brandId };
+      return {
+        items: [],
+        excludedCount: 0,
+        warnings: warnings.summarize(),
+        brandTotal,
+        brandId,
+        nextBrandPage: pageNum,
+        catalogEnded: true,
+      };
     }
 
     results.forEach((item: any) => rawEntries.push({ data: item, term: spec.keyword }));
+    nextBrandPage = pageNum + 1;
+    catalogEnded = results.length < pageSize;
   }
 
-  // 2) 통계 (중국 판매량은 CN 우선, 실패 시 KR 폴백)
-  await onProgress?.({ stage: "통계 수집", progressTotal: 0, progressDone: 0 });
+  await onProgress?.({ stage: "통계 수집", progressTotal: maxItems, progressDone: alreadyKept });
+  await applyStatistics(spec.id, supabase, poizon, rawEntries, warnings, reporter);
 
-  const spuIdsForStats = rawEntries
-    .map((entry) => Number(entry.data.spuInfo?.spuId || entry.data.spuId || entry.data.goodsId))
-    .filter((id) => !!id && !Number.isNaN(id));
-
-  if (spuIdsForStats.length > 0) {
-    const [{ hits: cachedStatsKR, missing: missingKR }, { hits: cachedStatsCN, missing: missingCN }] =
-      await Promise.all([
-        getCachedSpuStats(supabase, spuIdsForStats, "KR"),
-        getCachedSpuStats(supabase, spuIdsForStats, "CN"),
-      ]);
-
-    const [fetchedStatsKR, fetchedStatsCN] = await Promise.all([
-      missingKR.length > 0
-        ? fetchSpuStatistics(poizon, missingKR, ["KR"], {
-            reporter,
-            onChunkError: (context, error) =>
-              warnings.add(`${context}: ${error instanceof Error ? error.message : String(error)}`),
-          }).catch((error) => {
-            warnings.add(`KR 통계 조회 실패: ${error instanceof Error ? error.message : String(error)}`);
-            return {} as Record<string, any[]>;
-          })
-        : Promise.resolve({} as Record<string, any[]>),
-      // CN은 계정/상품에 따라 'Overseas region information not found'가 정상적으로 발생한다.
-      // 중국 판매량이 KR 값으로 폴백되는 설계이므로 실패를 경고로 올리지 않는다.
-      missingCN.length > 0
-        ? fetchSpuStatistics(poizon, missingCN, ["CN"], {
-            reporter,
-            onChunkError: () => {},
-          }).catch(() => {
-            return {} as Record<string, any[]>;
-          })
-        : Promise.resolve({} as Record<string, any[]>),
-    ]);
-
-    await Promise.all([
-      setCachedSpuStats(supabase, "KR", fetchedStatsKR),
-      setCachedSpuStats(supabase, "CN", fetchedStatsCN),
-    ]);
-
-    const statsKR = { ...cachedStatsKR, ...fetchedStatsKR };
-    const statsCN = { ...cachedStatsCN, ...fetchedStatsCN };
-
-    const { statsMapKR, statsMapCN } = buildStatsMaps(
-      { success: true, data: statsKR },
-      { success: true, data: statsCN }
-    );
-
-    rawEntries.forEach((entry) => applyStatsToItemData(entry.data, statsMapKR, statsMapCN));
-  }
-
-  // 3) 아이템 변환
   const built: SearchItem[] = [];
   for (const entry of rawEntries) {
     const item = buildSearchItem(entry.data, entry.term);
     if (item) built.push(item);
   }
 
-  // 4) 제외 필터
   await onProgress?.({ stage: "제외 필터 적용" });
 
   const exclusionOptions = {
-    excludeSkipped: options.excludeSkipped ?? false,
-    excludeReviewed: options.excludeReviewed ?? false,
+    excludeSkipped: true,
+    excludeReviewed: true,
+    excludeActed: true,
   };
   const spuKeys = [...new Set(built.map(getSpuKeyFromItem).filter(Boolean))];
   const ctx = await loadExclusionContext(supabase, userId, exclusionOptions, spuKeys);
   const { items: keptItems, excludedCount } = filterItems(built, exclusionOptions, ctx);
 
-  if (keptItems.length === 0) {
-    return { items: [], excludedCount, warnings: warnings.summarize(), brandTotal, brandId };
+  if (remaining <= 0 || keptItems.length === 0) {
+    return {
+      items: [],
+      excludedCount,
+      warnings: warnings.summarize(),
+      brandTotal,
+      brandId,
+      nextBrandPage,
+      catalogEnded: catalogEnded || remaining <= 0,
+    };
   }
 
-  // 5) 외부 소싱 오퍼 상위 10개
+  const toEnrich = keptItems.slice(0, remaining);
+
   await onProgress?.({
-    stage: "외부 원가 수집",
-    progressTotal: keptItems.length,
-    progressDone: 0,
+    stage: "가격 수집",
+    progressTotal: maxItems,
+    progressDone: alreadyKept,
   });
 
-  let sourceDone = 0;
-  const sourceProviders = await loadActiveSourceProviders();
+  const enriched = await fetchPricesForItems(toEnrich, {
+    supabase,
+    poizon,
+    onWarning: (reason, target) => warnings.add(reason, target),
+    onProgress: async (done) => {
+      await onProgress?.({ progressDone: alreadyKept + done });
+    },
+  });
 
-  const enriched = await mapWithConcurrency(
-    keptItems,
-    SOURCE_OFFER_CONCURRENCY,
-    async (item): Promise<EnrichedSearchItem> => {
-      const articleNumber = item.articleNumber;
-      let sourceOffers: SourceOffer[] = [];
-      let offerStatus: SourceOfferItemStatus = "skipped";
-
-      if (articleNumber && articleNumber !== "N/A") {
-        try {
-          const cached = await getCachedSourceOffers(supabase, articleNumber);
-          const result = cached
-            ? (() => {
-                const offers = filterOffersByActiveSources(cached, sourceProviders);
-                return {
-                  offers,
-                  status: (offers.length > 0 ? "ok" : "empty") as SourceOfferStatus,
-                  warnings: [] as string[],
-                };
-              })()
-            : await withRetry(
-                () => fetchTopSourceOffers(articleNumber, { providers: sourceProviders }),
-                {
-                  attempts: 3,
-                  baseDelayMs: 1_000,
-                  onRetry: (error, attempt) =>
-                    console.warn(
-                      `[job ${spec.id}] 소싱 오퍼 재시도 ${attempt} — ${articleNumber}: ${
-                        error instanceof Error ? error.message : String(error)
-                      }`
-                    ),
-                }
-              );
-
-          sourceOffers = result.offers;
-          offerStatus = result.status;
-          result.warnings.forEach((warning) => warnings.add(`원가 수집 경고: ${warning}`, articleNumber));
-          if (!cached && result.offers.length > 0) {
-            await setCachedSourceOffers(supabase, articleNumber, result.offers);
-          }
-        } catch (error) {
-          sourceOffers = [];
-          offerStatus = "failed";
-          warnings.add(`원가 수집 실패: ${error instanceof Error ? error.message : String(error)}`, articleNumber);
-        }
-      }
-
-      sourceDone += 1;
-      await onProgress?.({ progressDone: sourceDone });
-
-      return { item, sourceOffers, offerStatus };
-    }
-  );
-
-  return { items: enriched, excludedCount, warnings: warnings.summarize(), brandTotal, brandId };
+  return {
+    items: enriched,
+    excludedCount,
+    warnings: warnings.summarize(),
+    brandTotal,
+    brandId,
+    nextBrandPage,
+    catalogEnded,
+  };
 }

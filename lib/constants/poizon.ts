@@ -44,8 +44,14 @@ export const POIZON_CONSTANTS = {
     RECOMMEND_PRICE: "/dop/api/v1/pop/api/v1/recommend-bid/price",
     
     // 입찰 관리 (Listing Management)
-    LISTING_LIST: "/dop/api/v1/pop/api/v1/listing/list",
+    LISTING_LIST: "/dop/api/v1/pop/api/v1/retrieve-bid/general-type-bidding-list",
+    UPDATE_BID: "/dop/api/v1/pop/api/v1/update-bid/normal-autonomous-bidding",
     CANCEL_BID: "/dop/api/v1/pop/api/v1/cancel-bid/cancel-bidding",
     AUTO_FOLLOW_LIST: "/dop/api/v1/pop/api/v1/auto-follow-bidding/list",
-  }
+    AUTO_FOLLOW_SUBMIT: "/dop/api/v1/pop/api/v1/auto-follow-bidding/submit",
+
+    // 주문 (체결 후)
+    ORDER_LIST: "/dop/api/v1/pop/api/v1/order/generic_list",
+    ORDER_DELIVERY: "/dop/api/v1/pop/api/v1/order/delivery",
+  },
 } as const;

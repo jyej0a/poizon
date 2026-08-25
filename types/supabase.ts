@@ -35,6 +35,7 @@ export interface Database {
           fee_percentage: number
           min_fee: number
           max_fee: number
+          target_margin_rate: number
           created_at: string
           updated_at: string
         }
@@ -43,6 +44,7 @@ export interface Database {
           fee_percentage?: number
           min_fee?: number
           max_fee?: number
+          target_margin_rate?: number
           created_at?: string
           updated_at?: string
         }
@@ -51,6 +53,7 @@ export interface Database {
           fee_percentage?: number
           min_fee?: number
           max_fee?: number
+          target_margin_rate?: number
           created_at?: string
           updated_at?: string
         }

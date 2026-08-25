@@ -14,7 +14,7 @@ const checkboxVariants = cva(
       variant: {
         default:
           "border-border bg-background data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:text-primary-foreground",
-        skip: "border-border bg-background data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500 data-[state=checked]:text-white data-[state=indeterminate]:bg-amber-500 data-[state=indeterminate]:border-amber-500 data-[state=indeterminate]:text-white",
+        skip: "border-border bg-background data-[state=checked]:bg-slate-500 data-[state=checked]:border-slate-500 data-[state=checked]:text-white data-[state=indeterminate]:bg-slate-500 data-[state=indeterminate]:border-slate-500 data-[state=indeterminate]:text-white",
       },
       size: {
         default: "h-4 w-4",

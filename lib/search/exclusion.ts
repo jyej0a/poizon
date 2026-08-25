@@ -6,14 +6,16 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { SearchItem, SearchSkuDetail } from "@/lib/search/search-item";
-import { getSpuKeyFromItem, resolveSkuId } from "@/lib/search/search-item";
+import type { SearchItem } from "@/lib/search/search-item";
+import { getChildSkuIds, getSpuKeyFromItem } from "@/lib/search/search-item";
 
 const IN_CHUNK_SIZE = 120;
 
 export interface ExclusionOptions {
   excludeSkipped: boolean;
   excludeReviewed: boolean;
+  /** 손댄 품번 전부 제외 (연속 수집 기본). 옵션 하나라도 해당되면 품번 제외 */
+  excludeActed?: boolean;
 }
 
 export interface ExclusionContext {
@@ -25,6 +27,12 @@ export interface ExclusionContext {
   handledSpuIds: Set<string>;
   /** 검토완료 처리된 SKU */
   handledSkuIds: Set<string>;
+  /** 메모가 있는 SPU */
+  memoSpuIds: Set<string>;
+  /** 손댄 SKU (메모·수동입찰·재고·알림) */
+  actedSkuIds: Set<string>;
+  /** 시스템 입찰이 있는 SKU */
+  bidSkuIds: Set<string>;
 }
 
 const EMPTY_CONTEXT = (): ExclusionContext => ({
@@ -32,11 +40,13 @@ const EMPTY_CONTEXT = (): ExclusionContext => ({
   skippedSkuIds: new Set(),
   handledSpuIds: new Set(),
   handledSkuIds: new Set(),
+  memoSpuIds: new Set(),
+  actedSkuIds: new Set(),
+  bidSkuIds: new Set(),
 });
 
-function getChildSkuIds(item: { skuDetails?: SearchSkuDetail[] }): string[] {
-  const ids = (item.skuDetails || []).map(resolveSkuId).filter(Boolean);
-  return [...new Set(ids)];
+function hasText(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 export async function loadExclusionContext(
@@ -46,6 +56,9 @@ export async function loadExclusionContext(
   spuIds: string[]
 ): Promise<ExclusionContext> {
   const ctx = EMPTY_CONTEXT();
+  const excludeActed = options.excludeActed === true;
+  const loadSkip = options.excludeSkipped || excludeActed;
+  const loadStatus = options.excludeReviewed || excludeActed;
 
   const { data: excluded } = await supabase
     .from("excluded_articles")
@@ -55,7 +68,7 @@ export async function loadExclusionContext(
     ctx.excludedArticles.add(row.article_number);
   });
 
-  if (options.excludeSkipped) {
+  if (loadSkip) {
     const { data: skipped } = await supabase
       .from("skipped_items")
       .select("sku_id")
@@ -65,28 +78,58 @@ export async function loadExclusionContext(
     });
   }
 
-  if (options.excludeReviewed && spuIds.length > 0) {
+  if (loadStatus && spuIds.length > 0) {
     for (let i = 0; i < spuIds.length; i += IN_CHUNK_SIZE) {
       const chunk = spuIds.slice(i, i + IN_CHUNK_SIZE);
+      const numericSpu = chunk.map((id) => Number(id)).filter((id) => !Number.isNaN(id));
 
-      const [{ data: itemRows }, { data: skuRows }] = await Promise.all([
+      const [{ data: itemRows }, { data: skuRows }, { data: bidRows }] = await Promise.all([
         supabase
           .from("item_status")
-          .select("spu_id, handled")
+          .select("spu_id, handled, memo")
           .eq("user_id", userId)
           .in("spu_id", chunk),
         supabase
           .from("sku_status")
-          .select("sku_id, handled")
+          .select("sku_id, handled, memo, manual_bid_marked, stock_marked, watch_price")
           .eq("user_id", userId)
-          .in("spu_id", chunk.map((id) => Number(id)).filter((id) => !isNaN(id))),
+          .in("spu_id", numericSpu),
+        excludeActed && numericSpu.length > 0
+          ? supabase
+              .from("bid_history")
+              .select("sku_id")
+              .eq("user_id", userId)
+              .in("spu_id", numericSpu)
+          : Promise.resolve({ data: [] as { sku_id: string | number }[] }),
       ]);
 
-      (itemRows ?? []).forEach((row: { spu_id: string; handled: boolean }) => {
+      (itemRows ?? []).forEach((row: { spu_id: string; handled: boolean; memo: string | null }) => {
         if (row.handled) ctx.handledSpuIds.add(String(row.spu_id));
+        if (hasText(row.memo)) ctx.memoSpuIds.add(String(row.spu_id));
       });
-      (skuRows ?? []).forEach((row: { sku_id: string; handled: boolean }) => {
-        if (row.handled) ctx.handledSkuIds.add(String(row.sku_id));
+      (skuRows ?? []).forEach(
+        (row: {
+          sku_id: string | number;
+          handled: boolean;
+          memo: string | null;
+          manual_bid_marked: boolean;
+          stock_marked: boolean;
+          watch_price: number | null;
+        }) => {
+          const skuKey = String(row.sku_id);
+          if (row.handled) ctx.handledSkuIds.add(skuKey);
+          if (
+            hasText(row.memo) ||
+            row.manual_bid_marked ||
+            row.stock_marked ||
+            row.watch_price != null
+          ) {
+            ctx.actedSkuIds.add(skuKey);
+          }
+        }
+      );
+      (bidRows ?? []).forEach((row: { sku_id: string | number }) => {
+        ctx.bidSkuIds.add(String(row.sku_id));
       });
     }
   }
@@ -94,14 +137,14 @@ export async function loadExclusionContext(
   return ctx;
 }
 
-/** 옵션 전체가 스킵된 품번인지 */
+/** 옵션 전체가 스킵된 품번인지 (화면 조회용) */
 function isFullySkipped(item: SearchItem, skippedSkuIds: Set<string>): boolean {
   const childSkuIds = getChildSkuIds(item);
   if (childSkuIds.length === 0) return false;
   return childSkuIds.every((id) => skippedSkuIds.has(id));
 }
 
-/** SPU 자체가 검토완료거나 전 옵션이 검토완료인지 */
+/** SPU 자체가 검토완료거나 전 옵션이 검토완료인지 (화면 조회용) */
 function isReviewed(item: SearchItem, ctx: ExclusionContext): boolean {
   const spuKey = getSpuKeyFromItem(item);
   if (!spuKey) return false;
@@ -111,14 +154,51 @@ function isReviewed(item: SearchItem, ctx: ExclusionContext): boolean {
   return childSkuIds.length > 0 && childSkuIds.every((id) => ctx.handledSkuIds.has(id));
 }
 
+/** 옵션 하나라도 손댄 흔적이 있으면 품번 제외 (연속 수집) */
+export function isActedItem(item: SearchItem, ctx: ExclusionContext): boolean {
+  if (ctx.excludedArticles.has(item.articleNumber)) return true;
+
+  const spuKey = getSpuKeyFromItem(item);
+  if (spuKey && (ctx.handledSpuIds.has(spuKey) || ctx.memoSpuIds.has(spuKey))) return true;
+
+  const childSkuIds = getChildSkuIds(item);
+  if (childSkuIds.length === 0) {
+    return false;
+  }
+
+  return childSkuIds.some(
+    (id) =>
+      ctx.skippedSkuIds.has(id) ||
+      ctx.handledSkuIds.has(id) ||
+      ctx.actedSkuIds.has(id) ||
+      ctx.bidSkuIds.has(id)
+  );
+}
+
+export function isActedSpu(
+  spuId: string,
+  childSkuIds: string[],
+  ctx: ExclusionContext,
+  articleNumber?: string | null
+): boolean {
+  if (articleNumber && ctx.excludedArticles.has(articleNumber)) return true;
+  if (ctx.handledSpuIds.has(spuId) || ctx.memoSpuIds.has(spuId)) return true;
+  return childSkuIds.some(
+    (id) =>
+      ctx.skippedSkuIds.has(id) ||
+      ctx.handledSkuIds.has(id) ||
+      ctx.actedSkuIds.has(id) ||
+      ctx.bidSkuIds.has(id)
+  );
+}
+
 export interface FilterResult {
   items: SearchItem[];
   excludedCount: number;
 }
 
 /**
- * 영구 제외 → 배치 내 중복 → 스킵/검토완료 순으로 걸러낸다.
- * (기존 `handleSearch`와 동일한 순서)
+ * 영구 제외 → 배치 내 중복 → 스킵/검토완료/손댄 순으로 걸러낸다.
  */
 export function filterItems(
   items: SearchItem[],
@@ -127,6 +207,7 @@ export function filterItems(
 ): FilterResult {
   let excludedCount = 0;
   const seen = new Set<string>();
+  const excludeActed = options.excludeActed === true;
 
   const kept = items.filter((item) => {
     if (ctx.excludedArticles.has(item.articleNumber)) {
@@ -134,10 +215,17 @@ export function filterItems(
       return false;
     }
 
-    // 콤마 입력 중복 등 배치 내 중복 제거 (제외 건수에는 포함하지 않음)
     const key = String(item.id ?? item.articleNumber);
     if (seen.has(key)) return false;
     seen.add(key);
+
+    if (excludeActed) {
+      if (isActedItem(item, ctx)) {
+        excludedCount += 1;
+        return false;
+      }
+      return true;
+    }
 
     if (options.excludeSkipped && isFullySkipped(item, ctx.skippedSkuIds)) {
       excludedCount += 1;

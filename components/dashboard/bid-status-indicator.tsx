@@ -57,6 +57,7 @@ export function BidStatusIndicator({
     <div
       className={`relative group/bid-history ${interactive ? "cursor-pointer" : "cursor-help"}`}
       title={tooltip}
+      aria-label={tooltip}
       onClick={interactive ? onClick : undefined}
       onKeyDown={
         interactive
@@ -68,7 +69,7 @@ export function BidStatusIndicator({
             }
           : undefined
       }
-      role={interactive ? "button" : undefined}
+      role={interactive ? "button" : "img"}
       tabIndex={interactive ? 0 : undefined}
     >
       <div
@@ -98,6 +99,7 @@ export function BidStatusIndicator({
   const badgeEl = showBadge && (
     <span
       title={tooltip}
+      aria-label={tooltip}
       onClick={interactive ? onClick : undefined}
       onKeyDown={
         interactive
@@ -217,6 +219,8 @@ export function SpuBidSummary({
       <div
         className={`flex items-center justify-center w-[22px] h-[22px] rounded-md text-white shadow-sm ring-2 cursor-help transition-colors ${styles.icon}`}
         title={`입찰 ${bidCount}/${totalCount} (시스템 ${systemCount} · 수동 ${manualCount})`}
+        aria-label={`입찰 ${bidCount}/${totalCount} (시스템 ${systemCount} · 수동 ${manualCount})`}
+        role="img"
       >
         <Gavel size={12} strokeWidth={2.5} className="rotate-[-20deg]" />
       </div>

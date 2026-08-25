@@ -3,6 +3,7 @@
 import { Ban, Eye, EyeOff, MoreHorizontal, StickyNote, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ICON_PRESS } from "@/lib/utils/motion";
 import { ReviewCheckButton, type ReviewCheckState } from "./review-check-button";
 
 interface SpuRowManageCellProps {
@@ -73,7 +74,8 @@ export function SpuRowManageCell({
           type="button"
           onClick={onMemoClick}
           title={memoTitle || (hasMemo ? "메모" : "메모 추가")}
-          className={`p-1 rounded-md transition-all ${hasMemo ? "text-amber-600 bg-amber-500/10 hover:bg-amber-500/20" : "text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5"}`}
+          aria-label={hasMemo ? "품번 메모 보기" : "품번 메모 추가"}
+          className={`p-1 rounded-md transition-all ${ICON_PRESS} ${hasMemo ? "text-amber-600 bg-amber-500/10 hover:bg-amber-500/20" : "text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5"}`}
         >
           <StickyNote size={14} />
         </button>
@@ -91,7 +93,14 @@ export function SpuRowManageCell({
                 ? "이 품번 전체 옵션 스킵 해제"
                 : "이 품번 전체 옵션(사이즈) 스킵"
           }
-          className={`p-1 rounded-md transition-all disabled:opacity-20 disabled:cursor-not-allowed ${allSkusSkipped ? "text-orange-600 bg-orange-500/15 ring-1 ring-orange-500/40" : "text-muted-foreground/25 hover:text-muted-foreground/60 hover:bg-secondary/60"}`}
+          aria-label={
+            childCount === 0
+              ? "옵션 정보가 없어 스킵할 수 없습니다"
+              : allSkusSkipped
+                ? "이 품번 전체 옵션 스킵 해제"
+                : "이 품번 전체 옵션 스킵"
+          }
+          className={`p-1 rounded-md transition-all disabled:opacity-20 disabled:cursor-not-allowed ${ICON_PRESS} ${allSkusSkipped ? "text-slate-600 bg-slate-500/15 ring-1 ring-slate-500/40" : "text-muted-foreground/25 hover:text-muted-foreground/60 hover:bg-secondary/60"}`}
         >
           {allSkusSkipped ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
@@ -104,7 +113,7 @@ export function SpuRowManageCell({
           title="품번 추가 작업"
           aria-label="품번 추가 작업"
           aria-expanded={menuOpen}
-          className="p-1 text-muted-foreground/30 hover:text-foreground hover:bg-secondary/60 rounded-md transition-all"
+          className={`p-1 text-muted-foreground/30 hover:text-foreground hover:bg-secondary/60 rounded-md transition-all ${ICON_PRESS}`}
         >
           <MoreHorizontal size={14} />
         </button>
@@ -116,7 +125,7 @@ export function SpuRowManageCell({
               aria-label="메뉴 닫기"
               onClick={() => setMenuOpen(false)}
             />
-            <div className="absolute left-0 top-full mt-1 z-50 w-40 rounded-lg border border-border/60 bg-card shadow-lg py-1 text-xs">
+            <div className="absolute left-0 top-full mt-1 z-50 w-40 rounded-lg border border-border/60 glass-panel py-1 text-xs">
               <button
                 type="button"
                 onClick={() => {
@@ -131,6 +140,7 @@ export function SpuRowManageCell({
                 type="button"
                 onClick={() => {
                   setMenuOpen(false);
+                  if (!window.confirm("이 품번을 목록에서 삭제할까요?")) return;
                   onRemove();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 text-left text-destructive"

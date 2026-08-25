@@ -25,12 +25,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2, Calculator } from "lucide-react";
 import { updateSystemSettings } from "@/app/actions/settings";
-// import { useToast } from "@/hooks/use-toast";
+import { DEFAULT_SYSTEM_SETTINGS } from "@/lib/utils/calculate-margin";
 
 const formSchema = z.object({
   fee_percentage: z.coerce.number().min(0).max(100),
   min_fee: z.coerce.number().min(0),
   max_fee: z.coerce.number().min(0),
+  target_margin_rate: z.coerce.number().min(0).max(500),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -38,7 +39,7 @@ type FormValues = z.infer<typeof formSchema>;
 interface MarginSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  initialData: FormValues;
+  initialData: FormValues | null;
   onSuccess: (data: FormValues) => void;
 }
 
@@ -49,16 +50,14 @@ export function MarginSettingsDialog({
   onSuccess,
 }: MarginSettingsDialogProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  // const { toast } = useToast(); // hooks/use-toast.ts가 있는지 확인 필요
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: initialData,
+    defaultValues: initialData ?? DEFAULT_SYSTEM_SETTINGS,
   });
 
-  // initialData가 변경될 때 폼 값을 리셋합니다.
   React.useEffect(() => {
-    form.reset(initialData);
+    form.reset(initialData ?? DEFAULT_SYSTEM_SETTINGS);
   }, [initialData, form]);
 
   const onSubmit = async (values: FormValues) => {
@@ -68,19 +67,18 @@ export function MarginSettingsDialog({
         fee_percentage: values.fee_percentage,
         min_fee: values.min_fee,
         max_fee: values.max_fee,
+        target_margin_rate: values.target_margin_rate,
       });
       if (res.success) {
         onSuccess(values);
         onClose();
-        // toast({ title: "설정이 저장되었습니다." });
         alert("설정이 저장되었습니다.");
       } else {
         alert("오류 발생: " + res.error);
       }
-    } catch (error: any) {
-      alert("오류 발생: " + error.message);
+    } catch (error: unknown) {
+      alert("오류 발생: " + (error instanceof Error ? error.message : String(error)));
     } finally {
-      setIsSubmitting(true); // 오타 방지용으로 false로 바꿔야 함
       setIsSubmitting(false);
     }
   };
@@ -153,11 +151,35 @@ export function MarginSettingsDialog({
                 />
               </div>
 
+              <FormField
+                control={form.control}
+                name="target_margin_rate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="font-bold text-[13px]">목표 마진율 (%)</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <Input {...field} type="number" step="0.1" className="bg-secondary/20 border-none font-mono font-bold pl-3 pr-8" />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold text-xs">%</span>
+                      </div>
+                    </FormControl>
+                    <FormDescription className="text-[11px]">
+                      원가 대비 순수익. 입찰 열의 권장가가 이 비율을 만족하도록 역산됩니다.
+                    </FormDescription>
+                    <FormMessage className="text-[11px]" />
+                  </FormItem>
+                )}
+              />
+
               <div className="bg-primary/5 p-3 rounded-lg border border-primary/10">
                 <h4 className="text-[11px] font-bold text-primary uppercase tracking-wider mb-1">계산 방식 안내</h4>
                 <p className="text-[12px] text-muted-foreground leading-tight">
                   수수료 = 판매가 × {form.watch("fee_percentage")}%<br />
                   단, 최소 {Number(form.watch("min_fee")).toLocaleString()}원 ~ 최대 {Number(form.watch("max_fee")).toLocaleString()}원 사이로 제한됩니다.
+                  <br />
+                  실수령 = 판매가 − 수수료 (KRW)
+                  <br />
+                  권장 입찰가 = 실수령이 원가 × (1 + {form.watch("target_margin_rate")}%) 이상이 되는 최소 입찰가
                 </p>
               </div>
 

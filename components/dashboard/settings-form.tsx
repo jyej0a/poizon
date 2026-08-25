@@ -55,7 +55,7 @@ export function SettingsForm() {
   }
 
   return (
-    <div className="bg-card border rounded-2xl p-6 shadow-sm flex flex-col h-full">
+    <div className="glass-panel border rounded-2xl p-6 flex flex-col h-full">
       <div className="flex items-center gap-3 mb-6 pb-4 border-b">
         <div className="p-2 bg-primary/10 rounded-lg">
           <ShieldCheck className="text-primary h-6 w-6" />

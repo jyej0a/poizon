@@ -8,6 +8,7 @@ export type ActivityType =
   | "review"
   | "skip"
   | "memo"
+  | "watch"
   | "spu_review";
 
 export interface SkuActivity {
@@ -50,6 +51,11 @@ export function getSkuLastActivity(input: SkuActivityInput): SkuActivity | null 
   if (skuStatus?.handled && skuStatus.handledAt) {
     const r = toActivity("review", "검토완료", skuStatus.handledAt);
     if (r) candidates.push(r);
+  }
+
+  if (skuStatus?.watchPrice != null && skuStatus.watchAt) {
+    const w = toActivity("watch", `가격 알림 ₩${skuStatus.watchPrice.toLocaleString()}`, skuStatus.watchAt);
+    if (w) candidates.push(w);
   }
 
   const skip = toActivity("skip", "스킵", skippedAt);

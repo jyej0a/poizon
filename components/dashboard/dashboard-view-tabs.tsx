@@ -1,5 +1,7 @@
 "use client";
 
+import { CONTROL_PRESS } from "@/lib/utils/motion";
+
 export type WorkspaceView = "hierarchy" | "sku" | "profitable";
 
 export type DisplayFilter = "all" | "unprocessed" | "hideSkipped" | "hideReviewed";
@@ -30,7 +32,7 @@ export function DashboardViewTabs({ view, onViewChange }: DashboardViewTabsProps
           key={opt.id}
           type="button"
           onClick={() => onViewChange(opt.id)}
-          className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${
+          className={`px-2.5 h-full text-xs font-medium rounded-md transition-all ${CONTROL_PRESS} ${
             view === opt.id
               ? opt.id === "profitable"
                 ? "bg-blue-500/10 text-blue-600"

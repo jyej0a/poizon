@@ -1,7 +1,11 @@
 "use server";
 
 import { getCurrentUserId } from "@/lib/auth/current-user";
+import { getPoizonClient } from "@/app/actions/poizon";
+import { isActedSpu, loadExclusionContext } from "@/lib/search/exclusion";
+import { fetchPricesForItems } from "@/lib/search/item-prices";
 import * as jobStore from "@/lib/search/job-store";
+import { getChildSkuIds, toStoredSearchItem, type SearchItem } from "@/lib/search/search-item";
 import type {
   SearchJob,
   SearchJobItemRecord,
@@ -111,6 +115,90 @@ export async function deleteSearchJob(
     return { success: true };
   } catch (error: any) {
     console.error("[deleteSearchJob] Error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getActedSearchJobItems(input: {
+  type: SearchJobType;
+  keyword: string;
+}): Promise<{ success: boolean; items: SearchJobItemRecord[]; error?: string }> {
+  try {
+    const keyword = input.keyword.trim();
+    if (!keyword) return { success: true, items: [] };
+
+    const { supabase, userId } = await getCurrentUserId();
+    const items = await jobStore.listJobItemsByKeyword(
+      supabase,
+      userId,
+      input.type,
+      keyword
+    );
+    const spuKeys = [...new Set(items.map((row) => row.spuId).filter(Boolean))];
+    const ctx = await loadExclusionContext(
+      supabase,
+      userId,
+      { excludeSkipped: true, excludeReviewed: true, excludeActed: true },
+      spuKeys
+    );
+    const acted = items.filter((row) =>
+      isActedSpu(row.spuId, getChildSkuIds(row.payload), ctx, row.articleNumber)
+    );
+    return { success: true, items: acted };
+  } catch (error: any) {
+    console.error("[getActedSearchJobItems] Error:", error);
+    return { success: false, items: [], error: error.message };
+  }
+}
+
+export async function refreshSearchItemPrices(input: {
+  jobId?: string | null;
+  items: SearchItem[];
+}): Promise<{
+  success: boolean;
+  items?: SearchJobItemRecord[];
+  error?: string;
+}> {
+  try {
+    if (input.items.length === 0) {
+      return { success: false, error: "선택한 품번이 없습니다." };
+    }
+
+    const { supabase, userId } = await getCurrentUserId();
+    const poizon = await getPoizonClient();
+    const enriched = await fetchPricesForItems(input.items, { supabase, poizon });
+    const records: SearchJobItemRecord[] = enriched.map((entry, index) => ({
+      spuId: String(entry.item.id),
+      articleNumber: entry.item.articleNumber ?? null,
+      title: entry.item.title ?? null,
+      brand: entry.item.brand ?? null,
+      payload: {
+        ...toStoredSearchItem(entry.item),
+        sourceOffers: entry.sourceOffers,
+        skuRecommendations: entry.skuRecommendations,
+      },
+      offerStatus: entry.offerStatus,
+      sortOrder: index,
+    }));
+
+    if (input.jobId) {
+      const job = await jobStore.getJob(supabase, userId, input.jobId);
+      if (job) {
+        await jobStore.updateJobItemPayloads(
+          supabase,
+          input.jobId,
+          records.map((row) => ({
+            spuId: row.spuId,
+            payload: row.payload,
+            offerStatus: row.offerStatus,
+          }))
+        );
+      }
+    }
+
+    return { success: true, items: records };
+  } catch (error: any) {
+    console.error("[refreshSearchItemPrices] Error:", error);
     return { success: false, error: error.message };
   }
 }

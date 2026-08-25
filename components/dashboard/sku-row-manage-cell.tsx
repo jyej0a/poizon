@@ -2,6 +2,7 @@
 
 import { Eye, EyeOff, Home, StickyNote } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ICON_PRESS } from "@/lib/utils/motion";
 import { BidStatusIndicator, type BidStatusInfo } from "./bid-status-indicator";
 import { StockStatusIndicator } from "./stock-status-indicator";
 import { ReviewCheckButton } from "./review-check-button";
@@ -82,7 +83,8 @@ export function SkuRowManageCell({
             onClick={onManualBidToggle}
             disabled={isSavingManualBid}
             title="입찰 완료 (수동 표기)"
-            className="flex items-center justify-center w-[22px] h-[22px] rounded-md border-2 border-dashed border-red-300/60 text-red-400/50 hover:border-red-500 hover:text-red-600 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+            aria-label="입찰 완료 (수동 표기)"
+            className={`flex items-center justify-center w-[22px] h-[22px] rounded-md border-2 border-dashed border-red-300/60 text-red-400/50 hover:border-red-500 hover:text-red-600 hover:bg-red-500/10 transition-colors disabled:opacity-40 ${ICON_PRESS}`}
           >
             <span className="text-[10px] font-bold leading-none">+</span>
           </button>
@@ -104,7 +106,8 @@ export function SkuRowManageCell({
             onClick={onStockToggle}
             disabled={isSavingStock}
             title="재고 보유 (수동 표기)"
-            className="flex items-center justify-center w-[22px] h-[22px] rounded-md border-2 border-dashed border-emerald-300/60 text-emerald-400/50 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors disabled:opacity-40"
+            aria-label="재고 보유 (수동 표기)"
+            className={`flex items-center justify-center w-[22px] h-[22px] rounded-md border-2 border-dashed border-emerald-300/60 text-emerald-400/50 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors disabled:opacity-40 ${ICON_PRESS}`}
           >
             <Home size={11} strokeWidth={2.5} />
           </button>
@@ -122,8 +125,10 @@ export function SkuRowManageCell({
       <div className="w-6 flex items-center justify-center shrink-0">
         <button
           onClick={onMemoClick}
+          type="button"
           title={hasMemo ? `메모: ${memoTitle}${activityTitle ? `\n${activityTitle}` : ""}` : activityTitle ?? "메모 추가"}
-          className={`p-1 rounded-md transition-all ${hasMemo ? "text-amber-600 bg-amber-500/10 hover:bg-amber-500/20 ring-1 ring-amber-500/25" : "text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5"}`}
+          aria-label={hasMemo ? "메모 보기" : "메모 추가"}
+          className={`p-1 rounded-md transition-all ${ICON_PRESS} ${hasMemo ? "text-amber-600 bg-amber-500/10 hover:bg-amber-500/20 ring-1 ring-amber-500/25" : "text-muted-foreground/30 hover:text-amber-500 hover:bg-amber-500/5"}`}
         >
           <StickyNote size={iconSize} />
         </button>
@@ -132,10 +137,12 @@ export function SkuRowManageCell({
       <div className="w-6 flex items-center justify-center shrink-0">
         <button
           onClick={onSkipToggle}
+          type="button"
           title={isSkipped ? `스킵 해제${activityTitle ? `\n${activityTitle}` : ""}` : `이 옵션 스킵${activityTitle ? `\n${activityTitle}` : ""}`}
-          className={`p-1 rounded-md transition-all ${
+          aria-label={isSkipped ? "이 옵션 스킵 해제" : "이 옵션 스킵"}
+          className={`p-1 rounded-md transition-all ${ICON_PRESS} ${
             isSkipped
-              ? "text-orange-600 bg-orange-500/15 ring-1 ring-orange-500/40 hover:bg-orange-500/25"
+              ? "text-slate-600 bg-slate-500/15 ring-1 ring-slate-500/40 hover:bg-slate-500/25"
               : "text-muted-foreground/25 hover:text-muted-foreground/60 hover:bg-secondary/60"
           }`}
         >

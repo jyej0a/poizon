@@ -10,7 +10,7 @@ import React, {
   useState,
 } from "react";
 import { getSearchJobs } from "@/app/actions/search-jobs";
-import { isJobActive, type SearchJob } from "@/types/search-job";
+import { isJobActive, isQueuedUnclaimed, type SearchJob } from "@/types/search-job";
 
 /**
  * 검색 잡 목록을 한 곳에서 폴링한다.
@@ -26,6 +26,8 @@ const IDLE_POLL_MS = 30_000;
 interface SearchJobsContextValue {
   jobs: SearchJob[];
   activeCount: number;
+  runningCount: number;
+  unclaimedCount: number;
   /** 아직 열어보지 않은 완료 잡 수 (사이드바 배지) */
   unseenCount: number;
   isLoading: boolean;
@@ -91,6 +93,11 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const activeCount = useMemo(() => jobs.filter((j) => isJobActive(j.status)).length, [jobs]);
+  const runningCount = useMemo(() => jobs.filter((j) => j.status === "running").length, [jobs]);
+  const unclaimedCount = useMemo(
+    () => jobs.filter((j) => isQueuedUnclaimed(j)).length,
+    [jobs]
+  );
 
   // 진행 중 잡이 있을 때만 짧은 주기로 폴링한다
   useEffect(() => {
@@ -138,6 +145,8 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
     () => ({
       jobs,
       activeCount,
+      runningCount,
+      unclaimedCount,
       unseenCount,
       isLoading,
       error,
@@ -145,7 +154,7 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
       markSeen,
       markAllSeen,
     }),
-    [jobs, activeCount, unseenCount, isLoading, error, refresh, markSeen, markAllSeen]
+    [jobs, activeCount, runningCount, unclaimedCount, unseenCount, isLoading, error, refresh, markSeen, markAllSeen]
   );
 
   return <SearchJobsContext.Provider value={value}>{children}</SearchJobsContext.Provider>;

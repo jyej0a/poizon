@@ -2,6 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
+import { DEFAULT_SYSTEM_SETTINGS } from "@/lib/utils/calculate-margin";
 
 export async function savePoizonSettings(appKey: string, appSecret: string, accessToken?: string) {
   try {
@@ -105,18 +106,31 @@ export async function getSystemSettings() {
     const supabase = getServiceRoleClient();
     const { data, error } = await supabase
       .from("system_settings")
-      .select("fee_percentage, min_fee, max_fee")
+      .select("fee_percentage, min_fee, max_fee, target_margin_rate")
       .single();
 
     if (error) throw error;
-    return { success: true, data };
+    return {
+      success: true,
+      data: {
+        fee_percentage: Number(data.fee_percentage),
+        min_fee: Number(data.min_fee),
+        max_fee: Number(data.max_fee),
+        target_margin_rate: Number(data.target_margin_rate ?? DEFAULT_SYSTEM_SETTINGS.target_margin_rate),
+      },
+    };
   } catch (error) {
     console.error("[getSystemSettings] Error:", error);
-    return { success: true, data: { fee_percentage: 10, min_fee: 15000, max_fee: 45000 } };
+    return { success: true, data: { ...DEFAULT_SYSTEM_SETTINGS } };
   }
 }
 
-export async function updateSystemSettings(settings: { fee_percentage: number; min_fee: number; max_fee: number }) {
+export async function updateSystemSettings(settings: {
+  fee_percentage: number;
+  min_fee: number;
+  max_fee: number;
+  target_margin_rate: number;
+}) {
   try {
     const { userId } = await auth();
     if (!userId) {
@@ -124,20 +138,22 @@ export async function updateSystemSettings(settings: { fee_percentage: number; m
     }
 
     const supabase = getServiceRoleClient();
-    
+    const payload = {
+      fee_percentage: settings.fee_percentage,
+      min_fee: settings.min_fee,
+      max_fee: settings.max_fee,
+      target_margin_rate: settings.target_margin_rate,
+      updated_at: new Date().toISOString(),
+    };
+
     // system_settings는 단일 레코드만 존재하므로 첫 번째 레코드를 업데이트하거나 없으면 삽입합니다.
     const { data: existing } = await supabase.from("system_settings").select("id").limit(1).single();
-    
+
     let result;
     if (existing) {
       result = await supabase
         .from("system_settings")
-        .update({
-          fee_percentage: settings.fee_percentage,
-          min_fee: settings.min_fee,
-          max_fee: settings.max_fee,
-          updated_at: new Date().toISOString()
-        })
+        .update(payload)
         .eq("id", existing.id);
     } else {
       result = await supabase
@@ -145,7 +161,8 @@ export async function updateSystemSettings(settings: { fee_percentage: number; m
         .insert({
           fee_percentage: settings.fee_percentage,
           min_fee: settings.min_fee,
-          max_fee: settings.max_fee
+          max_fee: settings.max_fee,
+          target_margin_rate: settings.target_margin_rate,
         });
     }
 

@@ -32,12 +32,14 @@ function rowToSkuStatus(row: any): SkuStatus {
     handled: !!row.handled,
     handledDate: row.handled_at ? formatBidDate(row.handled_at) : null,
     handledAt: row.handled_at ?? null,
+    watchPrice: row.watch_price != null ? Number(row.watch_price) : null,
+    watchAt: row.watch_at ?? null,
     updatedAt: row.updated_at ?? null,
   };
 }
 
 const SKU_STATUS_SELECT =
-  "sku_id, memo, manual_bid_marked, manual_bid_at, stock_marked, stock_marked_at, handled, handled_at, updated_at";
+  "sku_id, memo, manual_bid_marked, manual_bid_at, stock_marked, stock_marked_at, handled, handled_at, watch_price, watch_at, updated_at";
 
 const IN_CHUNK_SIZE = 120;
 
@@ -259,6 +261,37 @@ export async function setManySkuHandled(
     return { success: true };
   } catch (error: any) {
     console.error("[setManySkuHandled] Error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/** 옵션(SKU) 가격 알림. price가 null이면 해제 */
+export async function setSkuWatchPrice(
+  skuId: string | number,
+  price: number | null,
+  spuId?: string | number | null
+) {
+  try {
+    const { supabase, userInternalId } = await getUserId();
+    const now = new Date().toISOString();
+    const watchPrice = price != null && Number.isFinite(price) && price > 0 ? Math.round(price) : null;
+
+    const { error } = await supabase.from("sku_status").upsert(
+      {
+        user_id: userInternalId,
+        sku_id: Number(skuId),
+        spu_id: spuId ? Number(spuId) : null,
+        watch_price: watchPrice,
+        watch_at: watchPrice != null ? now : null,
+        updated_at: now,
+      },
+      { onConflict: "user_id, sku_id" }
+    );
+
+    if (error) throw error;
+    return { success: true };
+  } catch (error: any) {
+    console.error("[setSkuWatchPrice] Error:", error);
     return { success: false, error: error.message };
   }
 }

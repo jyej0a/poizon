@@ -1,63 +1,160 @@
 import type { PoizonClient } from "@/lib/api/poizon";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
+import {
+  TRADE_STATUS,
+  type ParsedListingItem,
+  type PriceAdjustMode,
+} from "@/types/poizon-listing";
 
-export interface ParsedListingItem {
-  sellerBiddingNo: string;
-  skuId: number;
-  spuId: number;
-  articleNumber: string;
-  productName: string;
-  brandName: string;
-  categoryName: string;
-  sizeInfo: string;
-  image: string;
-  price: number;
-  quantity: number;
-  status: string;
-  bidFailCount: number;
-  cnMarketInfo: string;
-  krMarketInfo: string;
-  createdAt: string;
+export type { ParsedListingItem };
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-export function extractListingRawList(response: any): any[] {
-  return (
-    response?.data?.contents ||
-    response?.data?.list ||
-    response?.contents ||
-    response?.list ||
-    []
-  );
+function pickString(item: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = item[key];
+    if (value != null && String(value).trim()) return String(value);
+  }
+  return "";
 }
 
-export function parseListingItem(item: any): ParsedListingItem {
+function pickNumber(item: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = Number(item[key]);
+    if (Number.isFinite(value) && value !== 0) return value;
+  }
+  for (const key of keys) {
+    const value = Number(item[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function parseSizeInfo(item: Record<string, unknown>): string {
+  const props = item.regionSalePvInfoList;
+  if (Array.isArray(props)) {
+    const rows = props
+      .map((row) => asRecord(row))
+      .map((row) => ({
+        name: pickString(row, ["name"]),
+        value: pickString(row, ["localValue"]),
+      }))
+      .filter((row) => row.value);
+    const size = rows.find((row) => row.name.includes("사이즈") || /size/i.test(row.name));
+    const color = rows.find((row) => row.name.includes("색") || /color/i.test(row.name));
+    const parts = [color?.value, size?.value ?? rows.at(-1)?.value].filter(Boolean);
+    if (parts.length) return parts.join(" · ");
+  }
+
+  const rawProp = item.skuSaleProp;
+  if (typeof rawProp === "string") {
+    try {
+      const parsed = JSON.parse(rawProp) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((row) => pickString(asRecord(row), ["value"]))
+          .filter(Boolean)
+          .join(" · ");
+      }
+    } catch {
+      /* ignore malformed skuSaleProp */
+    }
+  }
+
+  return pickString(item, ["sizeInfo", "size"]);
+}
+
+function exposureEnabled(item: Record<string, unknown>, region: string): boolean {
+  const list = item.exposureItemList;
+  if (!Array.isArray(list)) return false;
+  const match = list
+    .map((row) => asRecord(row))
+    .find((row) => String(row.region || "").toUpperCase() === region);
+  return Boolean(match?.exposureEnabled);
+}
+
+export function extractListingRawList(response: unknown): unknown[] {
+  const root = asRecord(response);
+  const data = asRecord(root.data);
+  const list = data.list ?? data.contents ?? root.list ?? root.contents;
+  return Array.isArray(list) ? list : [];
+}
+
+export function extractListingLastOffsetId(response: unknown): number {
+  const root = asRecord(response);
+  const data = asRecord(root.data);
+  const value = Number(data.lastOffsetId ?? root.lastOffsetId ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function parseListingItem(raw: unknown): ParsedListingItem {
+  const item = asRecord(raw);
   return {
-    sellerBiddingNo: String(item.sellerBiddingNo || item.biddingNo || item.id || ""),
-    skuId: Number(item.skuId) || 0,
-    spuId: Number(item.spuId) || 0,
-    articleNumber: item.articleNumber || item.styleId || "",
-    productName: item.productName || item.title || item.spuName || "",
-    brandName: item.brandName || item.brand || "",
-    categoryName: item.categoryName || item.category || "",
-    sizeInfo:
-      item.sizeInfo ||
-      item.size ||
-      item.properties?.map((p: any) => p.value).join(" / ") ||
-      "",
-    image: item.image || item.logoUrl || item.imgUrl || "",
-    price: Number(item.price || item.bidPrice || item.amount || 0),
-    quantity: Number(item.quantity || item.qty || 1),
-    status: item.status || item.bidStatus || "active",
-    bidFailCount: item.bidFailCount || item.failCount || 0,
-    cnMarketInfo: item.cnMarketInfo || item.chinaMarket || "-",
-    krMarketInfo: item.krMarketInfo || item.koreaMarket || "-",
-    createdAt: item.createdAt || item.createTime || item.gmtCreate || "",
+    sellerBiddingNo: pickString(item, ["sellerBiddingNo", "biddingNo"]),
+    skuId: pickNumber(item, ["skuId"]),
+    spuId: pickNumber(item, ["spuId"]),
+    globalSkuId: pickNumber(item, ["globalSkuId"]),
+    globalSpuId: pickNumber(item, ["globalSpuId"]),
+    productName: pickString(item, ["spuTitle", "productName", "title", "spuName"]),
+    articleNumber: pickString(item, ["articleNumber", "goodsNo", "styleId"]),
+    image: pickString(item, ["image", "logoUrl", "imgUrl", "skuLogo"]),
+    sizeInfo: parseSizeInfo(item),
+    price: pickNumber(item, ["price", "bidPrice", "amount"]),
+    quantity: pickNumber(item, ["quantity", "qty"]) || 1,
+    onSaleQuantity: pickNumber(item, ["onSaleQuantity"]),
+    currency: pickString(item, ["currency"]) || "KRW",
+    tradeStatus: pickNumber(item, ["tradeStatus"]),
+    biddingType: pickNumber(item, ["biddingType"]) || POIZON_CONSTANTS.BIDDING.DEFAULT_BIDDING_TYPE,
+    saleType: Number.isFinite(Number(item.saleType))
+      ? Number(item.saleType)
+      : POIZON_CONSTANTS.BIDDING.DEFAULT_SALE_TYPE,
+    cnExposed: exposureEnabled(item, "CN"),
+    krExposed: exposureEnabled(item, "KR"),
+    isWeakIntercept: Boolean(item.isWeakIntercept),
+    createdAt: pickString(item, ["createTime", "createdAt", "gmtCreate"]),
+    modifiedAt: pickString(item, ["modifyTime", "modifiedAt"]),
   };
+}
+
+export function listingListPayload(input: {
+  tradeStatus: number;
+  exclusiveStartOffsetId?: number;
+  pageSize?: number;
+  sellerBiddingNo?: string;
+}): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    language: "ko",
+    timeZone: "Asia/Seoul",
+    region: POIZON_CONSTANTS.BIDDING.DEFAULT_COUNTRY,
+    biddingType: POIZON_CONSTANTS.BIDDING.DEFAULT_BIDDING_TYPE,
+    saleType: POIZON_CONSTANTS.BIDDING.DEFAULT_SALE_TYPE,
+    tradeStatus: input.tradeStatus,
+    exclusiveStartOffsetId: input.exclusiveStartOffsetId ?? 0,
+    pageSize: input.pageSize ?? 20,
+  };
+  const biddingNo = input.sellerBiddingNo?.trim();
+  if (biddingNo) payload.sellerBiddingNoList = [biddingNo];
+  return payload;
+}
+
+export function computeAdjustedPrice(
+  current: number,
+  mode: PriceAdjustMode,
+  value: number
+): number {
+  if (!Number.isFinite(value)) return 0;
+  if (mode === "set") return Math.max(0, Math.round(value));
+  if (mode === "delta") return Math.max(0, Math.round(current + value));
+  return Math.max(0, Math.round(current * (1 + value / 100)));
 }
 
 export function formatBidDate(dateStr: string): string {
   if (!dateStr) return "-";
-  const d = new Date(dateStr);
+  const d = new Date(dateStr.replace(" ", "T"));
   if (isNaN(d.getTime())) return dateStr;
   return d
     .toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })
@@ -65,8 +162,13 @@ export function formatBidDate(dateStr: string): string {
     .replace(/\.$/, "일");
 }
 
+function listingMatchesSku(parsed: ParsedListingItem, skuId: number): boolean {
+  return parsed.skuId === skuId || parsed.globalSkuId === skuId;
+}
+
 /**
- * 실데이터 listing/list API에서 SKU ID 집합에 해당하는 활성 입찰을 조회합니다.
+ * 실데이터 활성 입찰을 SKU ID 집합으로 조회합니다.
+ * 목록 API는 skuId 필터가 없어 커서를 넘기며 찾는다.
  */
 export async function fetchActiveListingsBySkuIds(
   client: PoizonClient,
@@ -74,39 +176,43 @@ export async function fetchActiveListingsBySkuIds(
 ): Promise<Map<number, ParsedListingItem>> {
   const targetSet = new Set(skuIds.filter((id) => id > 0));
   const result = new Map<number, ParsedListingItem>();
-
   if (targetSet.size === 0) return result;
 
-  let pageNo = 1;
-  const pageSize = 50;
+  let exclusiveStartOffsetId = 0;
+  const pageSize = 100;
 
-  while (pageNo <= 10) {
-    const response = await client.request<any>(POIZON_CONSTANTS.ENDPOINTS.LISTING_LIST, {
-      pageNo,
-      pageSize,
-      region: "KR",
-      language: "ko",
-    });
+  for (let page = 0; page < 10; page++) {
+    const response = await client.request<unknown>(
+      POIZON_CONSTANTS.ENDPOINTS.LISTING_LIST,
+      listingListPayload({
+        tradeStatus: TRADE_STATUS.ACTIVE,
+        exclusiveStartOffsetId,
+        pageSize,
+      })
+    );
 
     const rawList = extractListingRawList(response);
-
     for (const raw of rawList) {
       const parsed = parseListingItem(raw);
-      if (parsed.skuId && targetSet.has(parsed.skuId) && !result.has(parsed.skuId)) {
-        result.set(parsed.skuId, parsed);
+      if (!parsed.sellerBiddingNo) continue;
+      for (const skuId of targetSet) {
+        if (listingMatchesSku(parsed, skuId) && !result.has(skuId)) {
+          result.set(skuId, parsed);
+        }
       }
     }
 
     if (result.size >= targetSet.size) break;
-    if (rawList.length < pageSize) break;
-    pageNo++;
+    const lastOffsetId = extractListingLastOffsetId(response);
+    if (rawList.length < pageSize || lastOffsetId <= exclusiveStartOffsetId) break;
+    exclusiveStartOffsetId = lastOffsetId;
   }
 
   return result;
 }
 
 /**
- * listing/list 혼잡·타임아웃 시 빈 맵을 반환한다.
+ * listing list 혼잡·타임아웃 시 빈 맵을 반환한다.
  * 입찰 이력 표시는 로컬 DB로 폴백할 수 있게 한다.
  */
 export async function fetchActiveListingsBySkuIdsSafe(

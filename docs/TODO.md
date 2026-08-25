@@ -1,4 +1,4 @@
-# 프로젝트 구현 TODO (기반: PRD v0.9)
+# 프로젝트 구현 TODO (기반: PRD v1.0)
 
 ## 0. 프로젝트 공통 및 인프라
 - [x] Next.js 15 (App Router) + Tailwind v4 + shadcn/ui 기반 설정
@@ -9,6 +9,34 @@
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 4단계 UI 재구성 착수)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, §5.7 수집 몰 상태·추가 절차)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 몰 커버리지 +나이키KR·이랜드몰)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 파서 회귀 감시 자동화)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 검색 워커 cron Route Handler)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 5단계 F12 `search-board` 분해 착수)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, F12 검색·추천가·원가 오퍼 훅)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, F15 접근성)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 색 의존 해소)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, §8.2 추천가 응답 매핑)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 노출가 표기 현행 유지·후속은 이월)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 10.1 위생·순수익 헤더 정렬 현행)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 효자 상품 강조)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 컬럼 9→7 병합)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 노출가 호버 툴팁)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 가격 알림 인앱 워치)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 목표 마진율 역산 권장 입찰가)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-24, 몰 커버리지 +ABC마트)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 몰 커버리지 29CM·W컨셉 등 의류 몰 재프로브)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 몰 커버리지 +29CM·W컨셉)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 고밀도 보드 행 가독성)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 보드 미세 애니메이션)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 글래스 크롬)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 환율 철회 — POIZON은 KRW)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 검색 워커 미기동 안내)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 백그라운드 연속 수집 최대 500)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 사이드바 IA — 검색/판매/시스템, 주문 관리)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 주문 관리 API — generic_list·delivery)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 입찰 관리 API — general-type-bidding-list·update-bid)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 입찰 관리 최저가 필터·품번/이미지 보강)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 총건수 안내·주문 분할/QC·자동 재입찰·수익 현황)
 
 ## 1. 프론트엔드 UI 레이아웃 및 디자인 (Completed)
 - [x] 전역 테마 및 스타일 파일 (`app/globals.css`) 설정
@@ -18,6 +46,22 @@
 - [x] 입찰 완료 이력 표시기(Gavel Icon) 및 상세 툴팁 UI — 시스템(파랑) / 수동(빨강) 구분 (`bid-status-indicator.tsx`)
 - [x] SKU 행 관리 셀 공통화 (`sku-row-manage-cell.tsx`) — 선택·입찰·검토·메모·스킵
 - [x] 검토완료 체크 버튼 공통화 (`review-check-button.tsx`) — none / partial(주황) / all(녹색)
+- [x] 사이드바 그룹화 (2026-08-25) — 검색 / 판매 / 시스템. 라벨 한국어
+- [x] Item Search `comingSoon` 제거 — 검색은 `/dashboard`가 담당
+- [x] **주문 관리** (PRD §5.9) — 목록·발송 대기 송장 등록
+  - [x] 오픈플랫폼 주문 API 확인 — `order/generic_list`(목록, 생성일 최대 7일), `order/delivery`(발송)
+  - [x] 주문 목록·상태 보드 (발송 대기·검수·배송·완료·취소·반품)
+  - [x] 발송 대기건 운송사+송장 등록. 입찰 관리와 화면을 섞지 않음
+  - [x] 7일 넘는 기간은 윈도 분할 조회 후 합침 (상한 90일)
+  - [x] QC는 목록 identify 필드 + `Query Order QC Result`(살아 있으면). 운송사는 문서 ID + 직접 입력, 목록 API는 프로브
+- [x] **입찰 관리** (PRD §5.8) — 공식 목록·가격 수정·취소·CSV
+  - [x] 오픈플랫폼 목록 API 확인 — `retrieve-bid/general-type-bidding-list` (`tradeStatus`, 커서 `exclusiveStartOffsetId`)
+  - [x] 구 `listing/list` 제거. 상태 탭(활성/거래중/매진/취소) + 중국·한국 미노출(현재 페이지)
+  - [x] 가격 수정 `update-bid/normal-autonomous-bidding`. 선택 행 일괄 조정·CSV 내보내기
+  - [x] 현재 페이지 보강 — 품번·이미지(`by-spu`) + 중국/한국 최저가 미달 필터(`recommend-bid/price`). `by-sku-ids`·price-batch는 404
+  - [x] 총건수 없음 — 「이 페이지 N건 · 다음으로 이어 조회」만
+- [x] **자동 재입찰** (PRD §5.10) — 입찰 관리에서 follow-bidding 등록·조회
+- [x] **수익 현황** (PRD §5.11) — `/dashboard/revenue` 기간 집계. 주문 관리와 화면 분리
 
 ## 2. 데이터베이스 및 서버 액션 (Supabase)
 - [x] `system_settings`, `user_configs` 테이블 및 RLS 정책
@@ -57,16 +101,37 @@
 - [x] 추천 입찰가(중국 노출가) 자동 입력 기능 및 수익률 가계산 UI
 
 ## 6. 레이아웃 및 고도화 (Remaining)
-- [ ] **[In Progress]** 고밀도 대시보드 가독성 개선을 위한 배경색 및 구분자 세밀 조정
-- [ ] 사용자 인터랙션 강화를 위한 추가 미세 애니메이션 적용
-- [ ] 프리미엄 SaaS 느낌의 컴포넌트 스타일링 (Glassmorphism 강화)
-- [ ] 목표 마진율 입력 시 역산으로 권장 입찰가 도출 로직 추가
-- [ ] 수수료 정산 후 실수령액(net) 실시간 가계산 고도화 (환율 반영)
+- [x] 고밀도 대시보드 가독성 — 행 상태 색이 전 열에 관통 (2026-08-25)
+  - 원인: POIZON·원가·순수익·판매 셀의 열 틴트가 `tr` 상태 배경을 덮어 입찰/스킵/재고가 앞 2열에만 보임
+  - 셀 배경 틴트 제거. 헤더는 불투명 `bg-muted` + 열 상단 액센트. 호버는 셀 inset overlay
+  - 검토완료 행 왼쪽 에메랄드 테두리+흐림 (스킵 슬레이트와 구분)
+  - 펼친 옵션은 점선·들여쓰기 레일만 (자식 행 배경으로 상태 색을 가리지 않음)
+- [x] 미세 애니메이션 (2026-08-25)
+  - 품번 펼침: ChevronRight 90° 회전 (`motion-safe:duration-200`)
+  - 관리 열 22px·검토·알림·입찰 BID·뷰 탭·검색 타입·효자/알림 칩: 누름 스케일
+  - 자식 행 fade-in은 쓰지 않음 (검토/스킵 `opacity-40`과 충돌, 대량 행에서 버벅임)
+  - `prefers-reduced-motion`은 Tailwind `motion-safe:`로 비활성. 스피너는 유지
+- [x] 글래스 크롬 (2026-08-25)
+  - `glass-panel`: 반투명 카드 + blur + 이너 하이라이트. 대시보드 메쉬 배경 위에서만 티가 남
+  - 적용: 사이드바·워크스페이스 카드·툴바·최근검색/더보기/케밥·메모 팝오버·토스트·내비바
+  - 테이블 스크롤 영역은 `bg-card` 불투명 유지 (행 상태 색·고정 헤더)
+  - `prefers-reduced-transparency`면 솔리드 폴백
+- [x] 목표 마진율 입력 시 역산으로 권장 입찰가 도출 로직 추가 (2026-08-24)
+  - `system_settings.target_margin_rate`(원가 대비 순수익 %). 기본 20
+  - `recommendBidFromCost`: 수수료율·min/max 캡 반영. 입찰 열 `권장 ₩` 클릭 시 입력 채움
+- [x] 실수령액 표기 (입찰가 − 수수료, 전부 KRW, 2026-08-25)
+  - 입찰 열 `실수령 ₩`. 순수익 = 실수령 − 원가
+- [x] **환율 반영은 해당 없음·철회** (2026-08-25)
+  - 구 TODO 「환율 반영」은 POIZON이 원화 정산인 줄 모르고 구현했음
+  - API `currency=KRW`, 수수료·원가 오퍼도 원. CNY 환산 설정·시세 불러오기 제거
+  - `fx_*` 컬럼 drop (`20260825170000_drop_fx_settlement_rates.sql`)
 
 ## 7. 향후 추가 과제 (Roadmap)
-- [ ] 자동 재입찰(Auto-rebidding) 엔진 프로토타입 설계
-- [ ] 수익 현황 통계 대시보드 및 리포트 화면
-- [ ] 입찰 알림(Notification) 시스템 연동
+- [x] **주문 관리** — 목록·발송·7일 분할·QC 조회. 운송사 목록 API는 문서 ID+직접 입력 폴백
+- [x] **입찰 관리** — 목록·가격 수정·취소·CSV·최저가 필터·품번/이미지·커서 안내
+- [x] 자동 재입찰 — `follow-bidding/submit`·`auto-follow-bidding/list` (플랫폼이 가격 조정)
+- [x] 수익 현황 — `/dashboard/revenue` 집계. 원가 차감 순수익은 범위 밖
+- [ ] 입찰 알림(Notification) 시스템 연동 — 인앱 워치는 완료. 푸시는 미구현
 
 ## 8. 데이터 정합성 / 가격 소스 검증 (2026-06-18)
 
@@ -92,16 +157,18 @@
 - `localSoldNum30`이 오픈 API에서 전 SKU 0 → 현지 열 센터 parity 불가
 - `region=CN` 차단 (`20899003`)
 
-### 8.2 "중국 노출가" 가격 소스 검증 및 변경 (To-Do / 보류)
-- 현황(확인 완료):
-  - 옵션(SKU) 행의 "중국 노출가"는 `recommend-bid/price` API 응답의 `leakInfos[buyerRegion==="CN"].leakPrice`를 사용 → 즉 **"중국 구매자 페이지 노출 보장 가격"**(예시 블랙 100: 70,000원)
-  - "내 입찰가" 자동 입력값도 동일한 `leakPrice` 사용 (`search-board.tsx` 자동 입력 effect)
-  - **"중국 시장 현재 최저 입찰가"**(예시 71,000원)는 별도 값이며 현재 화면에 표시하지 않음
-  - 품번(SPU, 접힌 행)의 "중국 노출가"는 추천 API가 아니라 통계 API의 `minPrice/marketPrice`(`item.minPrice`)를 사용 → SKU 행과 값이 다를 수 있음
-  - 참고: 판매자센터 "상품검색" 화면의 "중국 구매자 페이지 노출" 컬럼은 사실상 "현재 최저 입찰가"(71,000)를 보여주는 라벨 불일치가 있음
-- [ ] 추천 API(`recommend-bid/price`) 원시 응답 전체를 덤프하여 입찰화면 3개 박스(노출 보장 / 현재 최저 입찰가 / 판매 기회 확대)와 각 필드(`leakInfos.leakPrice`, `globalMinPrice` 등) 1:1 매핑 확정
-- [ ] 매핑 확정 후, "중국 노출가" 컬럼에 어떤 값을 표기할지 결정(노출 보장 vs 현재 최저 입찰가) 및 SPU/SKU 행 소스 일관화
-- [ ] (선택) 두 값을 동시 표기하거나 툴팁으로 구분 노출하는 UI 검토
+### 8.2 "중국 노출가" 가격 소스 — **표기 현행 유지 (2026-08-24)**
+
+> SKU 「중국 노출가」·입찰 자동입력은 기존처럼 `leakInfos[CN].leakPrice`(노출 보장)를 쓴다. 화면 숫자는 바꾸지 않음.
+> 최저 입찰가·기회 확대·접힌 품번 출처는 호버 툴팁. 이상하면 그때 다시 본다.
+
+- 현황:
+  - 옵션(SKU) 행·입찰 자동입력 = `recommend-bid/price`의 `leakInfos[buyerRegion="CN"].leakPrice` (**노출 보장**)
+  - 품번(SPU, 접힌 행)은 통계 API `minPrice/marketPrice`라 SKU와 숫자가 다를 수 있음 (호버로 출처 안내, 표기는 유지)
+  - 실데이터 상품검색 목록의 「중국 구매자 페이지 노출」 라벨은 사실상 최저 입찰가에 가깝다 (혼동 주의, 내 사이트 표기는 바꾸지 않음)
+- [x] 추천 API 원시 응답 덤프 — `scripts/dump-recommend-price.ts` (`pnpm dump:recommend`)
+      ① 노출 보장 = `leakInfos[CN].leakPrice` / ② 최저 입찰 = `globalMinPrice`(=`asiaMinPrice`) /
+      ③ 기회 확대 = `effectiveExposurePrice` / 분포 = `priceRangeItems`
 
 ### 8.3 POIZON 오픈플랫폼 문의 (추후 / 필요 시)
 
@@ -205,21 +272,16 @@
 > ESLint **경고**는 미해결 상태로 남음 (미사용 import 다수, `<img>` → `next/image`,
 > `alt` 누락 3건, `react-hooks/exhaustive-deps` 3건). 5단계 컴포넌트 분해와 함께 처리.
 
-> **주의 (2026-08-20 확인)**: ESLint가 실제로는 **전혀 실행되지 않고 있다.**
-> `eslint-plugin-react-hooks`가 미설치라 `eslint-config-next` 로드가 실패하며,
-> `pnpm add`로 설치를 시도하면 pnpm store 위치 불일치로 거부된다
-> (`.pnpm-store/`가 프로젝트에 생성된 상태). 빌드는 이 실패를 치명적으로 보지 않아 통과한다.
-> → `pnpm install`로 store를 재정리한 뒤 플러그인을 설치해야 린트 커버리지가 복원된다.
-> 위 "경고 목록"은 린트가 동작하던 시점의 기록이므로 실제 현황과 다를 수 있다.
+> **린트 (2026-08-24)**: `pnpm remove` 시 기존 글로벌 store를 지정해 의존성을 맞춘 뒤
+> `next build`에서 ESLint가 다시 실행된다. 경고는 빌드 통과, `@next/next/no-assign-module-variable`
+> (G마켓 파서 `module` 식별자)만 에러라 `contentModule`로 변경. 미사용 import·`<img>` 경고는 잔여.
 
-#### 1단계 중 확인된 잔여 이슈 (미착수)
+#### 1단계 중 확인된 잔여 이슈 — 위생 완료 (2026-08-24)
 
-- [ ] **죽은 코드** — `lib/supabase.ts`, `lib/supabase/client.ts` 모두 **참조 0건**.
-      `AGENTS.md`가 `lib/supabase.ts`를 "레거시, 사용 지양"으로 표기 중이므로 삭제 검토
-- [ ] **스캐폴드 페이지 잔존** — `/auth-test`, `/storage-test`가 프로덕션 빌드에 포함(각 204kB, 최대 번들)
-- [ ] **Realtime 경고** — 빌드 중 `Failed to set initial Realtime auth token: TypeError: a is not a function` 2회.
-      `useClerkSupabaseClient`의 `accessToken` 콜백이 SSR 시점에 평가되며 발생(위 스캐폴드 페이지 기인).
-      **2단계 Realtime 잡 구독 시 반드시 `useEffect` 내부(클라이언트 전용)에서 채널 생성**할 것
+- [x] **죽은 코드** — `lib/supabase.ts`, `lib/supabase/client.ts` 삭제 (참조 0건).
+      `useClerkSupabaseClient`는 클라이언트 Realtime용으로 `lib/supabase/clerk-client.ts`에 유지
+- [x] **스캐폴드 페이지** — `/auth-test`, `/storage-test` 삭제. 유일한 `react-icons` 사용처라 의존성도 제거
+- [x] **Realtime 경고** — 스캐폴드 SSR이 원인이었음. 재발 방지: 잡 구독은 `useEffect` 내부(클라이언트 전용)에서 채널 생성
 
 ### 10.2 [2단계] 백그라운드 검색 잡 — 구현 완료 (2026-08-20)
 
@@ -309,7 +371,17 @@
 - [x] **외부·차단성 확인 완료** — 네이버 개발자센터 `검색 > 쇼핑 API`는 2026-07-31 종료.
       기존 키 포함 호출 불가이며 NAVER API HUB에도 대체 API가 없다.
       → 아래 10.3A의 **다중 몰 오퍼 집계**로 원가 소스 전략 전환
-- [ ] 배포 시 Route Handler + 크론으로 워커 이식 (현재는 로컬 상시 프로세스)
+- [x] 배포 시 Route Handler + 크론으로 워커 이식 — `app/api/cron/search-worker/route.ts`
+      + `lib/search/worker-run.ts` 공유 코어. `pnpm worker`는 동일 코어를 루프로 호출.
+      Vercel Cron: `vercel.json` (`* * * * *`, 매분). 인증: `Authorization: Bearer $CRON_SECRET`
+      (로컬 장시간 잡은 계속 `pnpm worker` 권장. 서버리스는 호출당 1잡·maxDuration 내 완료)
+- [x] **워커 미기동 감지** (2026-08-25) — `kolon` 브랜드 잡 2건이 18~21시간 `queued`로 방치.
+      원인: 로컬에 `pnpm worker` 없음, `.env`에 `CRON_SECRET` 없음(배포 크론도 로컬 큐를 안 집어감).
+      `/dashboard/jobs`에서 45초+ 대기는 안내 배너. 사이드바는 실제 `running`만 스피너
+- [x] **연속 수집 (최대 500)** (2026-08-25) — 1페이지 단발이 아니라 브랜드 페이지를 넘기며 손 안 댄 품번 500개까지 적재.
+      페이지마다 중간 저장. 로컬 워커는 이어서 처리, 크론은 호출당 1페이지. `running`+잠금 없음도 claim.
+      워커가 원가 오퍼+SKU 노출가까지 payload에 넣어 `결과 보기` 시 추가 조회 없음. 진행 중이어도 결과 보기.
+      손댄 품번(검토·메모·스킵·입찰·재고·알림·영구제외)은 다음 수집에서 제외. `손댄 품번 합치기`·`선택 가격 갱신`
 - [ ] (검토) 화면을 닫아두는 사용 패턴 대응 — Web Push / Notification API
 
 ### 10.3A [신규 최우선] 외부 원가 소스 전환
@@ -323,7 +395,8 @@
 - [x] **S2** 저장 구조 결정 — `search_job_items.payload.sourceOffers`에 포함
 - [x] **S3** 백그라운드 잡 단계 교체 — `naver` 단계를 `sourceOffers` 수집으로 교체
 - [x] **S4** 초기 타깃 몰 연결 — 롯데ON, 롯데백화점몰(`mall_no=2`), 롯데아이몰, 무신사, 코오롱몰, SSG, G마켓
-  - (+2026-08-24) **나이키 코리아**(`nike`), **이랜드몰**(`elandmall`)
+  - (+2026-08-24) **나이키 코리아**(`nike`), **이랜드몰**(`elandmall`), **ABC마트**(`abcmart`)
+  - (+2026-08-25) **29CM**(`29cm`), **W컨셉**(`wconcept`)
   - 롯데ON은 정규식 필드 조립 대신 `priceInfo` 포함 **상품 객체 단위** 파싱 (`extractJsonObjectsContainingKey`).
   - 롯데백화점몰은 ellotte.com이 롯데ON `mall_no=2`로 리다이렉트되므로 같은 파서에 몰 번호만 넣어 분리 수집
   - 롯데아이몰은 `searchMain.lotte?isTemplate=Y` JSON (`search_result_goods_info`)
@@ -334,6 +407,9 @@
   - G마켓은 `__NEXT_DATA__` 파서를 넣었으나 서버 `fetch`는 Akamai 403. 브라우저에서는 검색됨
   - 나이키 코리아는 Wall SSR `__NEXT_DATA__`의 `productGroupings` (공식몰 품번 검색)
   - 이랜드몰은 검색 HTML 상품 카드의 `data-item-no` / `data-saleprice` / `data-item-name`
+  - ABC마트는 검색 목록 HTML이 비어 있고 AJAX `result/list`에 카드가 있다. 품번 전체(`CW2288-111`)는 0건인 경우가 많아 스타일 접두(`CW2288`)로 재검색한 뒤 `/product/info`의 `styleInfo`+`prdtColorInfo`로 검증한다. 채널 10001(ABC마트)·10002(그랜드스테이지) 모두 수집
+  - 29CM 검색 HTML(`/store/search`)은 오퍼가 없고, 페이지가 쓰는 `display-bff-api` `POST /api/v1/listing/items`(pageType=`SRP`)로 수집. 상품명에 스타일 코드가 있으면 품번 검증에 쓴다
+  - W컨셉 검색 HTML은 건수만 SSR되고 목록은 `api-display` `POST /display/api/v3/search/result/product`. 키는 페이지 `runtimeConfig.DISPLAY_API_KEY`(프론트 공개값)이며 401이면 페이지에서 다시 읽는다
   - **품번 검증 필수** (`matchesArticleNumber`) — 몰 검색은 품번으로 질의해도 무관한 상품을 섞어 준다.
         실측: `CW2288-111` 60건 중 13건이 다른 상품이고 최저가(77,420원)가 전혀 다른 모델,
         `DD1391-100` 9건 중 8건이 5,070원대 잡화. 걸러내지 않으면 원가·마진이 그대로 어긋난다
@@ -345,13 +421,17 @@
 
 #### S4 남은 과제
 
-- [~] 몰 커버리지 확대 — **2026-08-24**: `nike`(나이키 코리아, `__NEXT_DATA__` Wall) · `elandmall`(이랜드몰 HTML 카드) 추가.
-      스니커즈(품번 검색) 공백을 줄이는 1차 확장. 하이버/29CM/W컨셉은 공개 검색 API가 서버 fetch에 닫혀 보류.
-      코오롱 계열 외 의류·잡화 빈 칸은 추가 몰·파서로 계속 확대
+- [~] 몰 커버리지 확대 — **2026-08-25**: `29cm`(display-bff listing SRP) · `wconcept`(api-display 검색, 공개 DISPLAY-API-KEY) 추가.
+      의류·잡화 공백을 줄이는 3차 확장. 하이버·LF몰·아디다스 KR은 서버 fetch가 세션/403으로 닫혀 보류.
+      2026-08-24: `nike` · `elandmall` · `abcmart`로 스니커즈 공백을 줄임
 - [x] **수집 몰 게시판 상태 관리** (`/dashboard/malls`, PRD §5.7) — 활성·품질·점검 상태(`ok`/`empty`/`failed`/미점검),
-      상태 필터·요약 카운트·개별/전체 연결 점검·캐시 비우기. 몰 추가 절차는 레지스트리+파서 (UI 전용 등록 없음)
-- [ ] 파서 회귀 감시 자동화 — `scripts/check-source-offers.ts` 주기 실행 + (선택) 워커/크론 연동.
-      코오롱몰 persisted query hash 변경 시 `lib/sourcing/providers/kolonmall.ts`의 `SEARCH_HASH` 갱신
+      상태 필터·요약 카운트·개별/전체/오래된만 연결 점검·캐시 비우기. 몰 추가 절차는 레지스트리+파서 (UI 전용 등록 없음)
+- [x] **파서 회귀 감시** — `pnpm check:offers` (`scripts/check-source-offers.ts`)
+      - 몰×품번 프로브, `failed` 시 exit 1 (파서/차단 회귀)
+      - `--write-db`로 `source_malls` 점검 컬럼 갱신, `--json` 리포트
+      - 기본 품번: `CW2288-111`(스니커즈), `TLTCM26521`(코오롱 의류)
+      - (선택) CI/cron에서 `pnpm check:offers --write-db` 주기 실행. 워커 Route Handler 이식과 별개
+      - 코오롱몰 hash 변경 시 `lib/sourcing/providers/kolonmall.ts`의 `SEARCH_HASH` 수동 갱신
 
 ### 10.3 [3단계] 캐시·동시성
 
@@ -364,7 +444,7 @@
       청크 **내부**의 SPU → globalSKU → fallbackSKU 순차 `await`는 데이터 의존성 때문에 남아 있음
 - [x] **F14** 네이버 동시성 상한 5 + 화이트리스트 잡당 1회 로드 (2단계에서 처리)
 
-### 10.4 [4단계] UI 재구성 — **착수 중 (2026-08-24)**
+### 10.4 [4단계] UI 재구성 — **완료 (2026-08-24)**
 
 > PRD v0.7 §5.1 반영. 뷰(데이터 모델)와 표시(필터)를 분리하고 툴바를 2단·오버플로로 정리한다.
 
@@ -376,24 +456,53 @@
       검색 시 스킵·검토완료 제외는 오버플로 「검색 옵션」+ localStorage + `search_jobs.options` 유지
 - [x] **F11** '수익 상품만'을 뷰 탭으로 승격 — `품번 | 옵션 | 수익 옵션`
       (`workspaceView`: hierarchy | sku | profitable). 표시 필터와 독립
-- [ ] 컬럼 9 → 7 병합 — `선택·상태` / `상품` / `POIZON`(거래가+노출가) / `원가 오퍼` / `마진` / `판매(중국·현지)` / `입찰`.
-      **선행**: 8.2 노출가 기준값 확정 (SKU는 `leakPrice`, SPU는 `minPrice`로 같은 컬럼에서 소스 불일치)
+- [x] 컬럼 9 → 7 병합 — `관리` / `상품` / `POIZON`(거래가+노출가) / `원가 오퍼` / `순수익` / `판매`(중국·현지) / `입찰`.
+      병합 열은 서브라벨 클릭으로 각각 정렬. 표기 소스는 현행 유지(SKU `leakPrice`, 접힌 품번 통계 `minPrice`).
+      너비 저장 키 `poizon_dashboard_widths_v5`.
 
 #### 4단계 구현 메모 (2026-08-24)
 
 - `components/dashboard/dashboard-view-tabs.tsx` — 뷰 탭 + `DisplayFilterSelect`
 - `components/dashboard/spu-row-manage-cell.tsx` — SPU 관리 열
 - `search-board.tsx` — `showOnlyProfitable`/`showOnlyUnprocessed` 제거 → `workspaceView`/`displayFilter`
+- `stacked-metric-cell.tsx` — POIZON·판매 2줄 셀. 헤더 서브라벨 정렬 (`avg`/`exposure`/`salesChina`/`salesLocal`)
+- 플랫 뷰 순수익 정렬·수익 옵션 필터는 화면과 같은 `skuOfferProfit`(추천가 반영)을 씀
 
-### 10.5 [5단계] 컴포넌트 분해·접근성
+### 10.5 [5단계] 컴포넌트 분해·접근성 — **완료 (2026-08-24)**
 
-- [ ] **F12** `search-board.tsx` 3,501줄 분해 — 데이터 훅 / 툴바 / 테이블 / 행 단위. 파생 상태는 `useMemo`로 흡수해 `useState` 53개 축소
-- [ ] **F15** 접근성 — 22px 아이콘 단독 버튼에 `aria-label` 부여, md 이상에서 텍스트 라벨 노출,
-      수익/손실에 부호(`+₩`/`-₩`) 병기, 파괴적 액션(목록 비우기·삭제)에 확인 단계 추가
-- [ ] 색 의존 해소 — 주황색이 '부분 검토'와 '스킵' 두 의미를 겸함. 아이콘 형태로 구분
+> 4단계 컬럼 9→7은 표기 소스 변경 없이 완료. F12·F15·색 의존 해소 완료.
 
-### 10.6 이월 과업 (루트 `TODO.md` 통합)
+- [x] **F12** `search-board.tsx` 분해 — 데이터 훅 / 툴바 / 테이블 / 행 단위. 파생 상태는 `useMemo`로 흡수해 `useState` 축소
+  - [x] 순수 헬퍼 분리: `lib/search/search-history.ts`, `brand-progress.ts`, `client-exclusion.ts`,
+        `lib/utils/exposure-price.ts`, `getChildSkuIds` → `search-item.ts`
+  - [x] 2단 툴바 → `components/dashboard/search-board-toolbar.tsx`
+  - [x] 테이블 헤더·행 — `search-board-results-table.tsx` + `search-board-spu-row.tsx` /
+        `search-board-sku-row.tsx` + `search-board-table-context.tsx`
+  - [x] 검색·추천가 큐·원가 오퍼 훅 — `hooks/use-poizon-search.ts`,
+        `use-sku-recommendation-queue.ts`, `use-source-offers.ts`
+- [x] **F15** 접근성 — 관리 열 22px는 `aria-label`만(밀도 유지). 툴바·사이드바 아이콘 단독은 md+ 텍스트.
+      수익/손실 `▲ +₩` / `▼ -₩`. 목록 비우기·행 삭제 확인. 색 의존 해소는 별도 항목
+  - [x] 22px 아이콘 단독 버튼 `aria-label`
+  - [x] 툴바 더보기·사이드바 접기/펴기 md+ 텍스트
+  - [x] 수익/손실 `▲ +₩` / `▼ -₩`
+  - [x] 행 삭제·최근 검색 전체 삭제 확인 (목록 비우기는 기존 confirm 유지)
+- [x] 색 의존 해소 — 부분 검토는 CircleDot+골드, 스킵은 EyeOff+슬레이트. 행 테두리·배지 음영 동시 맞춤
 
-- [ ] 수익 정렬 기능 (수익 높은 순/낮은 순)
-- [ ] 효자 상품(고수익 품목) 자동 시각적 강조 및 알림
-- [ ] 입찰 알림 (특정 가격 이하 도달 시)
+### 10.6 이월 과업 (루트 `TODO.md` 통합 + 노출가 후속)
+
+- [x] 수익 정렬 기능 (수익 높은 순/낮은 순) — 테이블 「순수익」 헤더 클릭 (`SortKey: profit`)
+- [x] 효자 상품(고수익 품목) 자동 시각적 강조 및 알림 (2026-08-24)
+  - 기준: 추정 순수익 ≥ `system_settings.min_fee × 2` (수익 옵션 `> 0`보다 한 단계 위)
+  - 시각: 순수익 셀 Sparkles + 바이올렛 + `효자`. 행 왼쪽 테두리는 상태용으로 유지
+  - 알림: 푸시 아님. 툴바 `효자 n` 칩, 클릭 시 수익 옵션 뷰 + 순수익 내림차순
+- [x] 입찰 알림 (특정 가격 이하 도달 시) — **인앱 워치 (2026-08-24)**. 푸시·상시 워커는 §7·10.2에 유지
+  - SKU 입찰 열 Bell. 목표가 = 입찰 입력값 또는 현재 노출가. 도달 = 노출가 ≤ 목표가
+  - `sku_status.watch_price` / `watch_at`. 툴바 `알림 n` → 옵션 뷰에서 도달 건만
+  - 화면을 닫아 두면 감시하지 않음 (검색 결과·추천가가 있을 때만)
+  - 원격 DB: `20260824220000_add_sku_watch_price.sql` `supabase db push` 적용
+- [x] **노출가 후속 (표기 현행 유지, 2026-08-24)**
+  - 접힌 품번(SPU)은 통계 `minPrice` 유지. 호버로 SKU `leakPrice`와 소스가 다를 수 있음을 안내 (같은 소스로 맞추지 않음)
+  - SKU 호버: 노출 보장(표기) + 최저 입찰가(`globalMinPrice`) + 기회 확대(`effectiveExposurePrice`, 있을 때만)
+  - `lib/utils/exposure-price.ts` 분해 헬퍼, `components/dashboard/exposure-price-hint.tsx`
+- [x] 목표 마진율 역산 권장 입찰가 (2026-08-24, §6)
+  - 마진 설정에 목표 마진율. 원가가 있는 SKU 입찰 열 `권장 ₩` → 클릭 채움

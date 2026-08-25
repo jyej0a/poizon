@@ -133,7 +133,8 @@ const ITEM_INSERT_CHUNK = 50;
 export async function insertJobItems(
   supabase: SupabaseClient,
   jobId: string,
-  items: InsertableJobItem[]
+  items: InsertableJobItem[],
+  startSortOrder = 0
 ): Promise<number> {
   if (items.length === 0) return 0;
 
@@ -145,7 +146,7 @@ export async function insertJobItems(
     brand: item.brand,
     payload: item.payload,
     naver_status: item.offerStatus,
-    sort_order: index,
+    sort_order: startSortOrder + index,
   }));
 
   let inserted = 0;
@@ -163,6 +164,19 @@ export async function insertJobItems(
   return inserted;
 }
 
+export async function countJobItems(
+  supabase: SupabaseClient,
+  jobId: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("search_job_items")
+    .select("id", { count: "exact", head: true })
+    .eq("job_id", jobId);
+
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /**
  * 대기 중인 잡 1건을 잠그고 가져온다.
  *
@@ -173,7 +187,7 @@ export async function claimNextJob(
   supabase: SupabaseClient,
   workerId: string
 ): Promise<{ job: SearchJob; userId: string } | null> {
-  const { data: candidates, error: pickError } = await supabase
+  const { data: queued, error: pickError } = await supabase
     .from("search_jobs")
     .select("id")
     .eq("status", "queued")
@@ -181,31 +195,62 @@ export async function claimNextJob(
     .limit(5);
 
   if (pickError) throw pickError;
-  if (!candidates || candidates.length === 0) return null;
 
   const now = new Date().toISOString();
 
-  for (const candidate of candidates) {
-    const { data, error } = await supabase
-      .from("search_jobs")
-      .update({
-        status: "running",
-        locked_at: now,
-        locked_by: workerId,
-        started_at: now,
-        updated_at: now,
-        error: null,
-      })
-      .eq("id", candidate.id)
-      .eq("status", "queued")
-      .select(`${JOB_SELECT}, user_id`)
-      .maybeSingle();
+  for (const candidate of queued ?? []) {
+    const claimed = await tryLockJob(supabase, candidate.id, workerId, now, "queued");
+    if (claimed) return claimed;
+  }
 
-    if (error) throw error;
-    if (data) return { job: rowToJob(data), userId: (data as any).user_id };
+  const { data: resumable, error: resumeError } = await supabase
+    .from("search_jobs")
+    .select("id")
+    .eq("status", "running")
+    .is("locked_at", null)
+    .order("updated_at", { ascending: true })
+    .limit(5);
+
+  if (resumeError) throw resumeError;
+
+  for (const candidate of resumable ?? []) {
+    const claimed = await tryLockJob(supabase, candidate.id, workerId, now, "running");
+    if (claimed) return claimed;
   }
 
   return null;
+}
+
+async function tryLockJob(
+  supabase: SupabaseClient,
+  jobId: string,
+  workerId: string,
+  now: string,
+  expectedStatus: "queued" | "running"
+): Promise<{ job: SearchJob; userId: string } | null> {
+  const patch: Record<string, unknown> = {
+    status: "running",
+    locked_at: now,
+    locked_by: workerId,
+    updated_at: now,
+    error: null,
+  };
+  if (expectedStatus === "queued") patch.started_at = now;
+
+  let query = supabase
+    .from("search_jobs")
+    .update(patch)
+    .eq("id", jobId)
+    .eq("status", expectedStatus);
+
+  if (expectedStatus === "running") {
+    query = query.is("locked_at", null);
+  }
+
+  const { data, error } = await query.select(`${JOB_SELECT}, user_id`).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { job: rowToJob(data), userId: (data as { user_id: string }).user_id };
 }
 
 /**
@@ -257,6 +302,124 @@ export async function finishJob(
     .eq("id", jobId);
 
   if (error) throw error;
+}
+
+export async function checkpointJob(
+  supabase: SupabaseClient,
+  jobId: string,
+  update: {
+    options: SearchJobOptions;
+    itemCount: number;
+    excludedCount: number;
+    warnings: string[];
+    stage: string | null;
+    progressTotal: number;
+    progressDone: number;
+  }
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("search_jobs")
+    .update({
+      options: update.options,
+      item_count: update.itemCount,
+      excluded_count: update.excludedCount,
+      warnings: update.warnings,
+      stage: update.stage,
+      progress_total: update.progressTotal,
+      progress_done: update.progressDone,
+      locked_at: now,
+      updated_at: now,
+    })
+    .eq("id", jobId);
+
+  if (error) throw error;
+}
+
+/** 더 모을 페이지가 남았으면 잠금만 풀고 running으로 둔다 (크론이 이어서 claim) */
+export async function releaseLockKeepRunning(
+  supabase: SupabaseClient,
+  jobId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("search_jobs")
+    .update({
+      status: "running",
+      locked_at: null,
+      locked_by: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId);
+
+  if (error) throw error;
+}
+
+export async function updateJobItemPayloads(
+  supabase: SupabaseClient,
+  jobId: string,
+  updates: Array<{
+    spuId: string;
+    payload: SearchJobItemPayload;
+    offerStatus?: SourceOfferItemStatus;
+  }>
+): Promise<void> {
+  for (const update of updates) {
+    const patch: Record<string, unknown> = { payload: update.payload };
+    if (update.offerStatus) patch.naver_status = update.offerStatus;
+    const { error } = await supabase
+      .from("search_job_items")
+      .update(patch)
+      .eq("job_id", jobId)
+      .eq("spu_id", update.spuId);
+    if (error) throw error;
+  }
+}
+
+export async function listJobItemsByKeyword(
+  supabase: SupabaseClient,
+  userId: string,
+  type: SearchJobType,
+  keyword: string,
+  limitJobs = 20
+): Promise<SearchJobItemRecord[]> {
+  const { data: jobs, error: jobError } = await supabase
+    .from("search_jobs")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("type", type)
+    .eq("keyword", keyword)
+    .order("created_at", { ascending: false })
+    .limit(limitJobs);
+
+  if (jobError) throw jobError;
+  const jobIds = (jobs ?? []).map((row: { id: string }) => row.id);
+  if (jobIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("search_job_items")
+    .select("spu_id, article_number, title, brand, payload, naver_status, sort_order, job_id")
+    .in("job_id", jobIds)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  const seen = new Set<string>();
+  const items: SearchJobItemRecord[] = [];
+  for (const row of data ?? []) {
+    const spuId = String(row.spu_id);
+    if (seen.has(spuId)) continue;
+    seen.add(spuId);
+    items.push({
+      spuId,
+      articleNumber: row.article_number ?? null,
+      title: row.title ?? null,
+      brand: row.brand ?? null,
+      payload: row.payload as SearchJobItemPayload,
+      offerStatus: row.naver_status as SourceOfferItemStatus,
+      sortOrder: row.sort_order ?? 0,
+    });
+  }
+  return items;
 }
 
 /** 재시도 여력이 남았으면 큐로 되돌리고, 아니면 실패로 확정한다. */
