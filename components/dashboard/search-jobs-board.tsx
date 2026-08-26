@@ -20,6 +20,7 @@ import {
   deleteSearchJob,
   retrySearchJob,
 } from "@/app/actions/search-jobs";
+import { SearchJobPushBanner } from "@/components/dashboard/search-job-push-banner";
 import { useSearchJobs } from "@/components/providers/search-jobs-provider";
 import { formatDateTime } from "@/lib/utils/format-date";
 import { hasJobResults, isJobActive, JOB_STATUS_LABEL, type SearchJob } from "@/types/search-job";
@@ -168,6 +169,8 @@ export function SearchJobsBoard() {
           {error}
         </div>
       )}
+
+      <SearchJobPushBanner />
 
       {unclaimedCount > 0 && (
         <div className="bg-amber-500/8 border border-amber-500/25 text-amber-800 rounded-xl px-4 py-3 text-sm">

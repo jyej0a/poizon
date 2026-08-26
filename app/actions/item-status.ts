@@ -79,15 +79,17 @@ export async function setItemHandled(
     const { supabase, userInternalId } = await getUserId();
 
     const { error } = await supabase.from("item_status").upsert(
-      {
-        user_id: userInternalId,
-        spu_id: String(spuId),
-        article_number: meta.articleNumber ?? null,
-        title: meta.title ?? null,
-        handled,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id, spu_id" }
+      [
+        {
+          user_id: userInternalId,
+          spu_id: String(spuId),
+          ...(meta.articleNumber != null ? { article_number: meta.articleNumber } : {}),
+          ...(meta.title != null ? { title: meta.title } : {}),
+          handled,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      { onConflict: "user_id, spu_id", defaultToNull: false }
     );
 
     if (error) throw error;
@@ -110,15 +112,17 @@ export async function setItemMemo(
     const { supabase, userInternalId } = await getUserId();
 
     const { error } = await supabase.from("item_status").upsert(
-      {
-        user_id: userInternalId,
-        spu_id: String(spuId),
-        article_number: meta.articleNumber ?? null,
-        title: meta.title ?? null,
-        memo: memo || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id, spu_id" }
+      [
+        {
+          user_id: userInternalId,
+          spu_id: String(spuId),
+          ...(meta.articleNumber != null ? { article_number: meta.articleNumber } : {}),
+          ...(meta.title != null ? { title: meta.title } : {}),
+          memo: memo || null,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      { onConflict: "user_id, spu_id", defaultToNull: false }
     );
 
     if (error) throw error;

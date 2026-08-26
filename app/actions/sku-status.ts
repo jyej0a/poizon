@@ -41,6 +41,12 @@ function rowToSkuStatus(row: any): SkuStatus {
 const SKU_STATUS_SELECT =
   "sku_id, memo, manual_bid_marked, manual_bid_at, stock_marked, stock_marked_at, handled, handled_at, watch_price, watch_at, updated_at";
 
+/** 배열 upsert만 `columns`를 붙여 보낸 컬럼만 ON CONFLICT UPDATE 한다. 단건 객체는 빠진 컬럼이 null/기본값으로 덮인다. */
+const SKU_STATUS_UPSERT = {
+  onConflict: "user_id, sku_id",
+  defaultToNull: false,
+} as const;
+
 const IN_CHUNK_SIZE = 120;
 
 async function fetchSkuStatusRows(
@@ -125,14 +131,16 @@ export async function setSkuMemo(
     const { supabase, userInternalId } = await getUserId();
 
     const { error } = await supabase.from("sku_status").upsert(
-      {
-        user_id: userInternalId,
-        sku_id: Number(skuId),
-        spu_id: spuId ? Number(spuId) : null,
-        memo: memo || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id, sku_id" }
+      [
+        {
+          user_id: userInternalId,
+          sku_id: Number(skuId),
+          spu_id: spuId ? Number(spuId) : null,
+          memo: memo || null,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      SKU_STATUS_UPSERT
     );
 
     if (error) throw error;
@@ -154,15 +162,17 @@ export async function setSkuManualBidMarked(
     const now = new Date().toISOString();
 
     const { error } = await supabase.from("sku_status").upsert(
-      {
-        user_id: userInternalId,
-        sku_id: Number(skuId),
-        spu_id: spuId ? Number(spuId) : null,
-        manual_bid_marked: marked,
-        manual_bid_at: marked ? now : null,
-        updated_at: now,
-      },
-      { onConflict: "user_id, sku_id" }
+      [
+        {
+          user_id: userInternalId,
+          sku_id: Number(skuId),
+          spu_id: spuId ? Number(spuId) : null,
+          manual_bid_marked: marked,
+          manual_bid_at: marked ? now : null,
+          updated_at: now,
+        },
+      ],
+      SKU_STATUS_UPSERT
     );
 
     if (error) throw error;
@@ -184,15 +194,17 @@ export async function setSkuStockMarked(
     const now = new Date().toISOString();
 
     const { error } = await supabase.from("sku_status").upsert(
-      {
-        user_id: userInternalId,
-        sku_id: Number(skuId),
-        spu_id: spuId ? Number(spuId) : null,
-        stock_marked: marked,
-        stock_marked_at: marked ? now : null,
-        updated_at: now,
-      },
-      { onConflict: "user_id, sku_id" }
+      [
+        {
+          user_id: userInternalId,
+          sku_id: Number(skuId),
+          spu_id: spuId ? Number(spuId) : null,
+          stock_marked: marked,
+          stock_marked_at: marked ? now : null,
+          updated_at: now,
+        },
+      ],
+      SKU_STATUS_UPSERT
     );
 
     if (error) throw error;
@@ -214,15 +226,17 @@ export async function setSkuHandled(
     const now = new Date().toISOString();
 
     const { error } = await supabase.from("sku_status").upsert(
-      {
-        user_id: userInternalId,
-        sku_id: Number(skuId),
-        spu_id: spuId ? Number(spuId) : null,
-        handled,
-        handled_at: handled ? now : null,
-        updated_at: now,
-      },
-      { onConflict: "user_id, sku_id" }
+      [
+        {
+          user_id: userInternalId,
+          sku_id: Number(skuId),
+          spu_id: spuId ? Number(spuId) : null,
+          handled,
+          handled_at: handled ? now : null,
+          updated_at: now,
+        },
+      ],
+      SKU_STATUS_UPSERT
     );
 
     if (error) throw error;
@@ -253,9 +267,7 @@ export async function setManySkuHandled(
       updated_at: now,
     }));
 
-    const { error } = await supabase.from("sku_status").upsert(rows, {
-      onConflict: "user_id, sku_id",
-    });
+    const { error } = await supabase.from("sku_status").upsert(rows, SKU_STATUS_UPSERT);
 
     if (error) throw error;
     return { success: true };
@@ -277,15 +289,19 @@ export async function setSkuWatchPrice(
     const watchPrice = price != null && Number.isFinite(price) && price > 0 ? Math.round(price) : null;
 
     const { error } = await supabase.from("sku_status").upsert(
-      {
-        user_id: userInternalId,
-        sku_id: Number(skuId),
-        spu_id: spuId ? Number(spuId) : null,
-        watch_price: watchPrice,
-        watch_at: watchPrice != null ? now : null,
-        updated_at: now,
-      },
-      { onConflict: "user_id, sku_id" }
+      [
+        {
+          user_id: userInternalId,
+          sku_id: Number(skuId),
+          spu_id: spuId ? Number(spuId) : null,
+          watch_price: watchPrice,
+          watch_at: watchPrice != null ? now : null,
+          watch_notified_at: null,
+          watch_checked_at: null,
+          updated_at: now,
+        },
+      ],
+      SKU_STATUS_UPSERT
     );
 
     if (error) throw error;

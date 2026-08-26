@@ -148,6 +148,11 @@ NEXT_PUBLIC_STORAGE_BUCKET=uploads
 
 # Search worker cron (Vercel Cron /api/cron/search-worker)
 CRON_SECRET=
+
+# Web Push (search job complete). Generate: pnpm exec web-push generate-vapid-keys
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:admin@example.com
 ```
 
 ## Development Guidelines

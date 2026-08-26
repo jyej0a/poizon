@@ -37,6 +37,12 @@
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 입찰 관리 API — general-type-bidding-list·update-bid)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 입찰 관리 최저가 필터·품번/이미지 보강)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-25, 총건수 안내·주문 분할/QC·자동 재입찰·수익 현황)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 검색 잡 완료 Web Push)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 가격 워치 Web Push)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, sku_status 부분 upsert 보존)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +11번가)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +GS샵·Hmall·더현대·CJ온스타일)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +LF몰·하이버)
 
 ## 1. 프론트엔드 UI 레이아웃 및 디자인 (Completed)
 - [x] 전역 테마 및 스타일 파일 (`app/globals.css`) 설정
@@ -131,7 +137,10 @@
 - [x] **입찰 관리** — 목록·가격 수정·취소·CSV·최저가 필터·품번/이미지·커서 안내
 - [x] 자동 재입찰 — `follow-bidding/submit`·`auto-follow-bidding/list` (플랫폼이 가격 조정)
 - [x] 수익 현황 — `/dashboard/revenue` 집계. 원가 차감 순수익은 범위 밖
-- [ ] 입찰 알림(Notification) 시스템 연동 — 인앱 워치는 완료. 푸시는 미구현
+- [x] 입찰 알림(Notification) 시스템 연동 (2026-08-26) — 인앱 워치 + 가격 도달 Web Push. 검색 잡 완료 푸시는 §10.2
+  - 워커가 구독이 있는 계정의 `watch_price` SKU를 약 5분마다 `recommend-bid/price`로 조회
+  - 도달 시 푸시 1회(`watch_notified_at`). 노출가가 목표를 다시 넘으면 재무장
+  - 같은 `push_subscriptions` 구독. 워커/크론이 없으면 푸시도 멈춤
 
 ## 8. 데이터 정합성 / 가격 소스 검증 (2026-06-18)
 
@@ -210,8 +219,10 @@
 
 ### 9.3 수동 검증 (로컬)
 
-- [ ] 검색 → 옵션 표기 → 새로고침 → 동일 검색 후 상태 유지 확인
-- [ ] 원격 DB `sku_status.handled`, `manual_bid_*` 컬럼 upsert 동작 확인
+- [x] 검색 → 옵션 표기 → 새로고침 → 동일 검색 후 상태 유지 확인
+- [x] 원격 DB `sku_status.handled`, `manual_bid_*` 컬럼 upsert 동작 확인
+  - 단건 객체 upsert는 빠진 컬럼을 null/기본값으로 덮어 수동 표기↔검토완료가 서로 지워졌음
+  - 배열 upsert(`columns` + `defaultToNull: false`)로 보낸 컬럼만 갱신. `item_status`·입찰 성공 시 `sku_status.handled`도 동일
 
 ---
 
@@ -382,7 +393,11 @@
       페이지마다 중간 저장. 로컬 워커는 이어서 처리, 크론은 호출당 1페이지. `running`+잠금 없음도 claim.
       워커가 원가 오퍼+SKU 노출가까지 payload에 넣어 `결과 보기` 시 추가 조회 없음. 진행 중이어도 결과 보기.
       손댄 품번(검토·메모·스킵·입찰·재고·알림·영구제외)은 다음 수집에서 제외. `손댄 품번 합치기`·`선택 가격 갱신`
-- [ ] (검토) 화면을 닫아두는 사용 패턴 대응 — Web Push / Notification API
+- [x] 화면을 닫아두는 사용 패턴 대응 — Web Push (2026-08-26)
+      - 이벤트: 검색 잡 `done` / `partial` / `failed`. 재시도 대기·사용자 취소는 안 보냄
+      - VAPID + `public/sw.js` + `push_subscriptions`. 워커가 종료 시 발송
+      - `/dashboard/jobs`에서 허용·해제·테스트. 클릭은 적재 건이 있으면 결과, 없으면 잡 목록
+      - 가격 워치 도달 푸시는 같은 구독으로 §7에서 처리
 
 ### 10.3A [신규 최우선] 외부 원가 소스 전환
 
@@ -397,6 +412,9 @@
 - [x] **S4** 초기 타깃 몰 연결 — 롯데ON, 롯데백화점몰(`mall_no=2`), 롯데아이몰, 무신사, 코오롱몰, SSG, G마켓
   - (+2026-08-24) **나이키 코리아**(`nike`), **이랜드몰**(`elandmall`), **ABC마트**(`abcmart`)
   - (+2026-08-25) **29CM**(`29cm`), **W컨셉**(`wconcept`)
+  - (+2026-08-26) **11번가**(`11st`) — 가격비교에 반복되는 오픈마켓. `apis.11st.co.kr/search/api/tab`
+  - (+2026-08-26) **GS샵**(`gsshop`) · **현대Hmall**(`hmall`) · **더현대닷컴**(`thehyundai`) · **CJ온스타일**(`cjonstyle`)
+    — 다나와 가격비교에 반복되는 홈쇼핑·백화점 플랫폼. 롯데홈쇼핑은 롯데아이몰(`lotteimall.com`)과 동일 사이트라 별도 파서 없음
   - 롯데ON은 정규식 필드 조립 대신 `priceInfo` 포함 **상품 객체 단위** 파싱 (`extractJsonObjectsContainingKey`).
   - 롯데백화점몰은 ellotte.com이 롯데ON `mall_no=2`로 리다이렉트되므로 같은 파서에 몰 번호만 넣어 분리 수집
   - 롯데아이몰은 `searchMain.lotte?isTemplate=Y` JSON (`search_result_goods_info`)
@@ -410,6 +428,12 @@
   - ABC마트는 검색 목록 HTML이 비어 있고 AJAX `result/list`에 카드가 있다. 품번 전체(`CW2288-111`)는 0건인 경우가 많아 스타일 접두(`CW2288`)로 재검색한 뒤 `/product/info`의 `styleInfo`+`prdtColorInfo`로 검증한다. 채널 10001(ABC마트)·10002(그랜드스테이지) 모두 수집
   - 29CM 검색 HTML(`/store/search`)은 오퍼가 없고, 페이지가 쓰는 `display-bff-api` `POST /api/v1/listing/items`(pageType=`SRP`)로 수집. 상품명에 스타일 코드가 있으면 품번 검증에 쓴다
   - W컨셉 검색 HTML은 건수만 SSR되고 목록은 `api-display` `POST /display/api/v3/search/result/product`. 키는 페이지 `runtimeConfig.DISPLAY_API_KEY`(프론트 공개값)이며 401이면 페이지에서 다시 읽는다
+  - 11번가는 검색 HTML이 빈 셸이고, 페이지가 쓰는 `apis.11st.co.kr/search/api/tab`(poc=`pc`, tabId=`TOTAL_SEARCH`)로 수집
+  - GS샵은 검색 HTML(`/shop/search/main.gs`)의 `#searchPrdList` 카드(`data-prdid` · `prd-name` · `set-price`)
+  - 현대Hmall은 Next 검색 페이지가 쓰는 `GET /api/hf/dp/v1/search/search?searchTerm=` (`hmallItemSearchResultList`)
+  - 더현대닷컴(더현대Hi)은 `GET /proxy/v1/dp/search/searchResult` (`searchQuery` · `searchType=NCP_PRODUCT`)
+  - CJ온스타일은 검색 HTML이 빈 셸이고 `search.cjonstyle.com/search-web/search/cjmall/item.json?k=`
+  - 롯데홈쇼핑 도메인(`lottehomeshopping.com`)은 롯데아이몰로 연결되므로 `lotteimall` 파서가 담당
   - **품번 검증 필수** (`matchesArticleNumber`) — 몰 검색은 품번으로 질의해도 무관한 상품을 섞어 준다.
         실측: `CW2288-111` 60건 중 13건이 다른 상품이고 최저가(77,420원)가 전혀 다른 모델,
         `DD1391-100` 9건 중 8건이 5,070원대 잡화. 걸러내지 않으면 원가·마진이 그대로 어긋난다
@@ -421,8 +445,13 @@
 
 #### S4 남은 과제
 
-- [~] 몰 커버리지 확대 — **2026-08-25**: `29cm`(display-bff listing SRP) · `wconcept`(api-display 검색, 공개 DISPLAY-API-KEY) 추가.
-      의류·잡화 공백을 줄이는 3차 확장. 하이버·LF몰·아디다스 KR은 서버 fetch가 세션/403으로 닫혀 보류.
+- [~] 몰 커버리지 확대 — **2026-08-26**: `lfmall`(GET `nxapi` multiSearch, CSRF 불필요) · `hiver`(capi `search/products`, 공개 guest Authorization) 추가.
+      무신사는 S4부터 `musinsa`로 이미 연결. 품번 미판매는 `empty`.
+      입점 셀러·스마트스토어는 가게마다 HTML/API가 달라 파서 대량 추가 대상이 아님 (PRD §5.7).
+      같은 날: `gsshop` · `hmall` · `thehyundai` · `cjonstyle` · `11st` 추가. 롯데홈쇼핑은 `lotteimall`과 동일.
+      보류: 쿠팡·옥션·아디다스 KR(서버 fetch 403). 빈 `limited` 스텁은 넣지 않음.
+      네이버 카탈로그는 봇 418이라 같은 품번(`JWJGX25211`) 다나와 가격비교의 **플랫폼 몰**을 기준으로 함.
+      2026-08-25: `29cm`(display-bff listing SRP) · `wconcept`(api-display 검색, 공개 DISPLAY-API-KEY) 추가.
       2026-08-24: `nike` · `elandmall` · `abcmart`로 스니커즈 공백을 줄임
 - [x] **수집 몰 게시판 상태 관리** (`/dashboard/malls`, PRD §5.7) — 활성·품질·점검 상태(`ok`/`empty`/`failed`/미점검),
       상태 필터·요약 카운트·개별/전체/오래된만 연결 점검·캐시 비우기. 몰 추가 절차는 레지스트리+파서 (UI 전용 등록 없음)
@@ -495,11 +524,11 @@
   - 기준: 추정 순수익 ≥ `system_settings.min_fee × 2` (수익 옵션 `> 0`보다 한 단계 위)
   - 시각: 순수익 셀 Sparkles + 바이올렛 + `효자`. 행 왼쪽 테두리는 상태용으로 유지
   - 알림: 푸시 아님. 툴바 `효자 n` 칩, 클릭 시 수익 옵션 뷰 + 순수익 내림차순
-- [x] 입찰 알림 (특정 가격 이하 도달 시) — **인앱 워치 (2026-08-24)**. 푸시·상시 워커는 §7·10.2에 유지
+- [x] 입찰 알림 (특정 가격 이하 도달 시) — 인앱 워치 (2026-08-24) + **Web Push (2026-08-26)**
   - SKU 입찰 열 Bell. 목표가 = 입찰 입력값 또는 현재 노출가. 도달 = 노출가 ≤ 목표가
-  - `sku_status.watch_price` / `watch_at`. 툴바 `알림 n` → 옵션 뷰에서 도달 건만
-  - 화면을 닫아 두면 감시하지 않음 (검색 결과·추천가가 있을 때만)
-  - 원격 DB: `20260824220000_add_sku_watch_price.sql` `supabase db push` 적용
+  - `sku_status.watch_price` / `watch_at`. 툴바 `알림 n` → 옵션 뷰에서 도달 건만 (화면이 열려 있을 때)
+  - 화면을 닫아 두면 워커가 약 5분마다 노출가를 조회해 푸시. `watch_notified_at` / `watch_checked_at`
+  - 원격 DB: `20260824220000_add_sku_watch_price.sql`, `20260826123000_add_sku_watch_push.sql`
 - [x] **노출가 후속 (표기 현행 유지, 2026-08-24)**
   - 접힌 품번(SPU)은 통계 `minPrice` 유지. 호버로 SKU `leakPrice`와 소스가 다를 수 있음을 안내 (같은 소스로 맞추지 않음)
   - SKU 호버: 노출 보장(표기) + 최저 입찰가(`globalMinPrice`) + 기회 확대(`effectiveExposurePrice`, 있을 때만)

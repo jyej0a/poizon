@@ -1,6 +1,6 @@
 # PRD: Poizon Bidding (포이즌 입찰 자동화 시스템)
 
-> 버전: 1.0 (최근 업데이트: 2026-08-25, 주문 관리 API 연동)
+> 버전: 1.0 (최근 업데이트: 2026-08-26, 몰 커버리지 +LF몰·하이버)
 
 > 작성일: 2026-06-15  
 > 작성자: 안티그래비티 (문지영 대비마마 교시 반영)
@@ -95,7 +95,7 @@
 - **노출가 호버**: 셀 숫자는 바꾸지 않는다. SKU는 최저 입찰가(`globalMinPrice`)·기회 확대(`effectiveExposurePrice`)를 툴팁으로, 접힌 품번은 통계 `minPrice` 출처를 안내. SKU 클릭은 기존처럼 노출 보장가로 입찰가 채움
 - **열 헤더 정렬**: 거래가·노출가·최저 오퍼/원가·순수익·판매량(중국·현지) 서브라벨·컬럼 클릭으로 오름/내림차순 (순수익 높은 순·낮은 순 포함)
 - **효자 상품**: 추정 순수익이 **최소 수수료 × 2** 이상인 옵션. 순수익 셀에 Sparkles+바이올렛+`효자` 표기(행 왼쪽 테두리는 입찰/스킵/검토 상태용으로 유지). 툴바 `효자 n` 칩은 현재 목록 건수이며, 클릭 시 `수익 옵션` 뷰 + 순수익 높은 순
-- **가격 알림**: SKU 입찰 열 Bell. 목표가는 입찰 입력값(있으면) 또는 현재 노출가. **노출가 ≤ 목표가**이면 도달. 푸시 아님. 툴바 `알림 n` 칩은 도달 건수이며, 클릭 시 `옵션` 뷰에서 도달 건만. 저장: `sku_status.watch_price`
+- **가격 알림**: SKU 입찰 열 Bell. 목표가는 입찰 입력값(있으면) 또는 현재 노출가. **노출가 ≤ 목표가**이면 도달. 화면이 열려 있으면 인앱(툴바 `알림 n`, `옵션` 뷰 필터). **화면을 닫아 두면** 워커가 약 5분마다 `recommend-bid/price`로 노출가를 보고, 도달 시 Web Push 1회. 노출가가 다시 목표를 넘으면 재무장. 구독은 검색 작업 「알림 허용」과 동일 (`push_subscriptions`). `sku_status.watch_price` / `watch_notified_at` / `watch_checked_at`
 - **권장 입찰가**: 마진 설정의 **목표 마진율**(원가 대비 순수익). 1등 오퍼 원가가 있으면 입찰 열에 `권장 ₩`이 뜨고, 클릭 시 입찰 입력을 채운다. 수수료율·최소/최대 수수료 캡을 반영해 역산 (`system_settings.target_margin_rate`)
 - **실수령액**: 입찰가 − 수수료. **전부 KRW** (POIZON `currency=KRW`, 원가 오퍼도 원). 환율 변환 없음. 순수익 = 실수령 − 1등 오퍼 원가. 입찰 열 `실수령 ₩`
 - **카테고리 필터링**: 검색 결과 내에서 특정 분류(신발, 의류 등)만 골라보기 지원
@@ -129,6 +129,7 @@
 - **입찰 성공 연동**: 입찰 성공 시 **해당 SKU만** 검토완료 처리 — 품번(SPU) 전체는 자동 완료하지 않음
 - **즉시 반영**: 검토완료는 낙관적 UI — 로딩 스피너 없이 클릭 즉시 반영, DB 저장은 백그라운드
 - **새로고침 복원**: 검색 결과 로드 시 SPU 기준으로 `sku_status`·`item_status` 재조회 (실패 시 피드백 표시)
+- **부분 갱신**: `sku_status`·`item_status` upsert는 보낸 컬럼만 갱신한다. 수동 입찰 표기 후 검토완료(또는 그 반대)를 이어서 저장해도 다른 컬럼을 기본값으로 덮지 않는다
 - **미처리 필터 연동**: 품번 검토완료 또는 **모든 옵션** 검토완료된 품번만 "미처리 상품만 보기"에서 숨김 (입찰만 있는 품번은 유지)
 
 > **입찰 표시 vs 검토완료**: 망치(Gavel) = "이 옵션 입찰함", 체크 = "이 옵션/품번 검토 끝" (입찰과 무관하게 사용 가능)
@@ -153,6 +154,10 @@
   - **배포**: `POST/GET /api/cron/search-worker` + 플랫폼 크론(예: Vercel Cron). `CRON_SECRET` Bearer 인증.
     호출당 대기/`running`(잠금 없음) 잡 1건을 claim하고 **1페이지** 처리. 서버리스 타임아웃에 걸리면 `locked_at` stale 회수 후 재시도
 - **워커 미기동 안내**: 대기 잡이 45초 넘게 `queued`면 `/dashboard/jobs`에 안내 배너. 사이드바는 진행 중 스피너 대신 대기 배지
+- **완료 푸시**: 탭을 닫아 두어도 잡이 `done`/`partial`/`failed`로 끝나면 Web Push. 재시도 대기·사용자 취소는 보내지 않음. **가격 워치 도달도 같은 구독**으로 발송
+  - `/dashboard/jobs`에서 브라우저 알림을 허용하면 구독을 `push_subscriptions`에 저장. 검색 완료 클릭은 적재 건이 있으면 `/dashboard?job=`, 없으면 `/dashboard/jobs`. 가격 워치는 `/dashboard`
+  - VAPID 키(`NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`)가 없거나 권한 거부·미지원이면 발송하지 않음. 만료(410) 구독은 삭제
+  - iOS는 홈 화면에 추가한 뒤에만 동작. 워커가 없으면 가격 워치 푸시도 멈춘다 (`pnpm worker` / 크론)
 - **진행률 및 재실행**: `/dashboard/jobs`에서 상태, 적재 수/500, 제외 건수, 부분 실패 사유, 재실행/삭제 제공. `item_count > 0`이면 진행 중이어도 `결과 보기`
 - **결과 인계**: 잡 payload에 통계·원가 오퍼·노출가가 들어 있어 화면이 추가 조회 없이 바로 표시. 시간은 지나면 `선택 가격 갱신`(체크한 품번만 노출가·원가 재조회, 잡 payload 동기화)
 
@@ -162,7 +167,10 @@
   - 건수·최저가·시각·메시지를 행에 저장·표시. 개별·전체·「오래된만」(미점검/24h+) 점검 지원
 - **품질 표시**: 코드 레지스트리의 `reliability` — `정상` / `제한적`(예: G마켓 Akamai 403)
 - **상태 필터**: 활성·점검 결과별로 목록을 좁혀 회귀(조용한 0건)를 바로 확인
-- **초기 타깃 몰**: 롯데ON · 롯데백화점몰 · 롯데아이몰 · 무신사 · 코오롱몰 · SSG · G마켓(제한적) · **나이키 코리아** · **이랜드몰** · **ABC마트** · **29CM** · **W컨셉**
+- **초기 타깃 몰**: 롯데ON · 롯데백화점몰 · 롯데아이몰 · 무신사 · 코오롱몰 · SSG · G마켓(제한적) · **나이키 코리아** · **이랜드몰** · **ABC마트** · **29CM** · **W컨셉** · **11번가** · **GS샵** · **현대Hmall** · **더현대닷컴** · **CJ온스타일** · **LF몰** · **하이버**
+- **입점 셀러**: 가격비교에 나오는 **가게 하나하나**(네이버 스마트스토어, 백화점 브랜드샵, 오픈마켓·하이버의 개별 셀러). HTML/API가 가게마다 달라 파서로 전부 넣을 수 없다. 내 사이트는 **플랫폼 몰**(11번가·LF몰·하이버 검색 등) 한 파서로 그 몰 카탈로그의 오퍼를 가져온다. 하이버에서 「신세계마켓」이 파는 상품은 하이버 오퍼로 잡히며, 그 셀러 사이트를 따로 파싱하지 않는다
+- **무신사**: 이미 `musinsa` 파서가 있다 (`api.musinsa.com` PLP). 해당 품번을 무신사가 안 팔면 점검은 `empty`이며 파서 고장이 아니다 (의류 `JWJGX25211` vs 스니커즈 `CW2288-111`)
+- **보류 몰**: 쿠팡·옥션·아디다스 KR은 서버 fetch가 Akamai 403이라 파서를 넣지 않음 (G마켓과 같은 제한적 스텁은 빈 결과만 늘림)
 - **회귀 감시**: `pnpm check:offers`로 몰별 실수집 프로브(품번 목록). `failed`면 exit 1.
   - `--write-db` 시 `source_malls` 최근 점검 컬럼 갱신 → `/dashboard/malls`에서 바로 확인
   - 대시보드 「전체 점검」·「오래된만」과 동일 판정(`ok`/`empty`/`failed`)
@@ -257,13 +265,14 @@
 | 테이블 | 단위 | 주요 필드 | 용도 |
 |--------|------|-----------|------|
 | `item_status` | SPU(품번) | `handled`, `memo` | 품번 검토완료·메모 |
-| `sku_status` | SKU(옵션) | `memo`, `manual_bid_marked`, `handled`, `watch_price` | 옵션 메모·수동 입찰 표기·검토완료·가격 알림 |
+| `sku_status` | SKU(옵션) | `memo`, `manual_bid_marked`, `handled`, `watch_price`, `watch_notified_at`, `watch_checked_at` | 옵션 메모·수동 입찰 표기·검토완료·가격 알림·푸시 중복 방지 |
 | `bid_history` | SKU | `bid_price`, `size_info`, `created_at` | 시스템 입찰 이력 |
 | `search_jobs` | 검색 요청 | `type`, `keyword`, `options`, `status`, `progress_*` | 백그라운드 검색 작업 관리 |
 | `search_job_items` | 검색 결과 | `job_id`, `spu_id`, `payload`, `naver_status` | 잡 단위 결과(통계·원가·노출가) |
+| `push_subscriptions` | 브라우저 구독 | `endpoint`, `p256dh`, `auth` | 검색 잡 완료 Web Push |
 | `system_settings` | 전역 1행 | `fee_*`, `target_margin_rate` | 수수료·목표 마진 |
 
-마이그레이션: `supabase/migrations/20260616000000_create_item_status.sql`, `20260619000000_create_sku_status.sql`, `20260620000000_add_sku_manual_bid.sql`, `20260621000000_add_sku_handled.sql`, `20260824220000_add_sku_watch_price.sql`, `20260824233000_add_target_margin_rate.sql`, `20260402083600_create_bid_history.sql`, `20260820000000_create_search_jobs.sql`
+마이그레이션: `supabase/migrations/20260616000000_create_item_status.sql`, `20260619000000_create_sku_status.sql`, `20260620000000_add_sku_manual_bid.sql`, `20260621000000_add_sku_handled.sql`, `20260824220000_add_sku_watch_price.sql`, `20260824233000_add_target_margin_rate.sql`, `20260402083600_create_bid_history.sql`, `20260820000000_create_search_jobs.sql`, `20260826120000_create_push_subscriptions.sql`, `20260826123000_add_sku_watch_push.sql`
 
 ---
 
@@ -272,6 +281,8 @@
 - [x] **주문 관리**: 체결 주문 목록·상태·발송·7일 분할·QC 조회. 수익 리포트(집계)와 구분 (`docs/TODO.md` §1)
 - [x] **자동 재입찰**: 입찰 관리에서 follow-bidding 등록·조회. 플랫폼이 가격을 맞춤
 - [x] **수익 현황**: `/dashboard/revenue` 기간 집계 (체결 매출·수수료). 원가 차감 순수익은 범위 밖
+- [x] **검색 잡 완료 Web Push**: 탭을 닫아 두어도 `done`/`partial`/`failed` 알림 (`docs/TODO.md` §10.2)
+- [x] **가격 워치 Web Push**: 워커가 노출가 ≤ 목표가이면 1회 푸시 (`docs/TODO.md` §7)
 - [ ] **다중 사용자 권한**: 직원 계정별 입찰 권한 제어 및 실적 추적
 - [ ] **다중 몰 집계 고도화**: 외부 소싱 오퍼를 더 많은 몰로 확장하고 품절/프로모션 판별 정확도 향상
 - [x] **"중국 노출가" 후속**: SKU `leakPrice`·접힌 품번 통계 `minPrice` 표기 유지. 호버로 최저 입찰가·기회 확대·접힌 품번 출처 안내 (`docs/TODO.md` §10.6)

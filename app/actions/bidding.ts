@@ -111,15 +111,17 @@ async function saveBidToLocalDb(
 
   const now = new Date().toISOString();
   await supabase.from("sku_status").upsert(
-    {
-      user_id: userInternalId,
-      sku_id: skuId,
-      spu_id: spuId,
-      handled: true,
-      handled_at: now,
-      updated_at: now,
-    },
-    { onConflict: "user_id, sku_id" }
+    [
+      {
+        user_id: userInternalId,
+        sku_id: skuId,
+        spu_id: spuId,
+        handled: true,
+        handled_at: now,
+        updated_at: now,
+      },
+    ],
+    { onConflict: "user_id, sku_id", defaultToNull: false }
   );
 }
 

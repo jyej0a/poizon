@@ -4,6 +4,9 @@
  */
 
 import { createPoizonClientForUser } from "@/lib/api/poizon-credentials";
+import { buildSearchJobPushPayload } from "@/lib/push/payload";
+import { sendPushToUser } from "@/lib/push/send";
+import { runPriceWatchTick } from "@/lib/search/price-watch-run";
 import { runSearchJobChunk, type ProgressUpdate } from "@/lib/search/run-search-job";
 import { toStoredSearchItem } from "@/lib/search/search-item";
 import * as jobStore from "@/lib/search/job-store";
@@ -12,6 +15,7 @@ import {
   type SearchJob,
   type SearchJobOptions,
 } from "@/types/search-job";
+import type { SearchJobPushStatus } from "@/types/push";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** 진행률 DB 반영 최소 간격. 아이템마다 쓰면 왕복이 과하다 */
@@ -74,6 +78,34 @@ function mergeWarnings(existing: string[], incoming: string[]): string[] {
   return next;
 }
 
+async function notifyJobPush(
+  supabase: SupabaseClient,
+  userId: string,
+  job: SearchJob,
+  status: SearchJobPushStatus,
+  onLog: (message: string) => void,
+  error?: string
+) {
+  try {
+    const result = await sendPushToUser(
+      supabase,
+      userId,
+      buildSearchJobPushPayload({
+        id: job.id,
+        keyword: job.keyword,
+        itemCount: job.itemCount,
+        status,
+        error,
+      })
+    );
+    if (result.sent > 0) {
+      onLog(`푸시 ${result.sent}건 발송`);
+    }
+  } catch (err) {
+    onLog(`푸시 실패: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function processOneChunk(
   supabase: SupabaseClient,
   job: SearchJob,
@@ -95,6 +127,7 @@ async function processOneChunk(
       warnings: job.warnings,
       stage: null,
     });
+    await notifyJobPush(supabase, userId, job, status, onLog);
     return { status, job, detail: `${status}, 상한 ${maxItems}건` };
   }
 
@@ -190,6 +223,7 @@ async function processOneChunk(
 
     const detail = `${status}, ${itemCount}건 적재, ${excludedCount}건 제외`;
     onLog(`잡 완료 ${job.id} (${label}) — ${detail}`);
+    await notifyJobPush(supabase, userId, nextJob, status, onLog);
     return { status, job: nextJob, detail };
   } catch (error) {
     await progress.flush().catch(() => {});
@@ -197,6 +231,9 @@ async function processOneChunk(
     const result = await jobStore.requeueOrFail(supabase, job, message);
     const status = result === "requeued" ? "requeued" : "failed";
     onLog(`잡 ${status === "requeued" ? "재시도 대기" : "실패"} ${job.id} — ${message}`);
+    if (status === "failed") {
+      await notifyJobPush(supabase, userId, job, "failed", onLog, message);
+    }
     return { status, job, detail: message };
   }
 }
@@ -220,6 +257,13 @@ export async function processSearchJob(
   let lastDetail = "";
 
   for (let chunk = 0; chunk < maxChunks; chunk += 1) {
+    if (chunk > 0) {
+      try {
+        await runPriceWatchTick(supabase, log);
+      } catch (error) {
+        log(`가격 워치 실패: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     const outcome = await processOneChunk(supabase, current, userId, log);
     lastStatus = outcome.status;
     lastDetail = outcome.detail;
@@ -251,6 +295,12 @@ export async function runWorkerTick(
     reclaimed = await jobStore.reclaimStaleJobs(supabase);
   } catch (error) {
     log(`stale lock 회수 실패: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    await runPriceWatchTick(supabase, log);
+  } catch (error) {
+    log(`가격 워치 실패: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   let claimed: { job: SearchJob; userId: string } | null = null;

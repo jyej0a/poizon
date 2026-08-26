@@ -1,7 +1,14 @@
 import { abcMartProvider } from "@/lib/sourcing/providers/abcmart";
 import { twentyNineCmProvider } from "@/lib/sourcing/providers/29cm";
+import { elevenStProvider } from "@/lib/sourcing/providers/11st";
+import { cjOnstyleProvider } from "@/lib/sourcing/providers/cjonstyle";
 import { elandMallProvider } from "@/lib/sourcing/providers/elandmall";
 import { gmarketProvider } from "@/lib/sourcing/providers/gmarket";
+import { gsShopProvider } from "@/lib/sourcing/providers/gsshop";
+import { hiverProvider } from "@/lib/sourcing/providers/hiver";
+import { hmallProvider } from "@/lib/sourcing/providers/hmall";
+import { lfMallProvider } from "@/lib/sourcing/providers/lfmall";
+import { theHyundaiProvider } from "@/lib/sourcing/providers/thehyundai";
 import { kolonMallProvider } from "@/lib/sourcing/providers/kolonmall";
 import { lotteImallProvider } from "@/lib/sourcing/providers/lotteimall";
 import { lotteDepartmentProvider, lotteOnProvider } from "@/lib/sourcing/providers/lotteon";
@@ -89,6 +96,48 @@ export const SOURCE_MALL_DEFINITIONS: SourceMallDefinition[] = [
     homepage: "https://www.wconcept.co.kr",
     reliability: "ok",
     notes: "api-display 검색. DISPLAY-API-KEY는 검색 페이지 runtimeConfig 공개값",
+  },
+  {
+    provider: elevenStProvider,
+    homepage: "https://www.11st.co.kr",
+    reliability: "ok",
+    notes: "검색 HTML은 빈 셸. apis.11st.co.kr/search/api/tab (poc=pc, TOTAL_SEARCH)",
+  },
+  {
+    provider: gsShopProvider,
+    homepage: "https://www.gsshop.com",
+    reliability: "ok",
+    notes: "검색 HTML #searchPrdList 카드 (data-prdid)",
+  },
+  {
+    provider: hmallProvider,
+    homepage: "https://www.hmall.com",
+    reliability: "ok",
+    notes: "검색 SPA. GET /api/hf/dp/v1/search/search?searchTerm=",
+  },
+  {
+    provider: theHyundaiProvider,
+    homepage: "https://hi.thehyundai.com",
+    reliability: "ok",
+    notes: "GET /proxy/v1/dp/search/searchResult (searchQuery, searchType=NCP_PRODUCT)",
+  },
+  {
+    provider: cjOnstyleProvider,
+    homepage: "https://www.cjonstyle.com",
+    reliability: "ok",
+    notes: "검색 HTML은 빈 셸. search.cjonstyle.com/search-web/search/cjmall/item.json",
+  },
+  {
+    provider: lfMallProvider,
+    homepage: "https://www.lfmall.co.kr",
+    reliability: "ok",
+    notes: "검색 POST는 CSRF 필요. GET nxapi multiSearch?multiKeywords= 사용",
+  },
+  {
+    provider: hiverProvider,
+    homepage: "https://www.hiver.co.kr",
+    reliability: "ok",
+    notes: "capi search/products. Authorization은 프론트 공개 guest 토큰(CM). 401 시 갱신",
   },
   {
     provider: gmarketProvider,
