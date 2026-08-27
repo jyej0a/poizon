@@ -17,8 +17,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ```bash
-# Development server with turbopack
+# Development server with turbopack (검색 워커도 같이 기동)
 pnpm dev
+
+# Search worker only (Next 없이 큐만 처리)
+pnpm worker
 
 # Production build
 pnpm build

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   AlertTriangle,
   Ban,
@@ -93,8 +93,7 @@ function ProgressBar({ job }: { job: SearchJob }) {
 }
 
 export function SearchJobsBoard() {
-  const router = useRouter();
-  const { jobs, isLoading, error, refresh, markSeen, markAllSeen, activeCount, runningCount, unclaimedCount } = useSearchJobs();
+  const { jobs, isLoading, error, refresh, markAllSeen, activeCount, runningCount, unclaimedCount } = useSearchJobs();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -109,11 +108,6 @@ export function SearchJobsBoard() {
     }
   };
 
-  const openResults = (job: SearchJob) => {
-    markSeen(job.id);
-    router.push(`/dashboard?job=${job.id}`);
-  };
-
   return (
     <div className="h-full flex flex-col gap-4 p-2 w-full animate-in fade-in duration-300">
       <div className="glass-panel border border-secondary/40 rounded-xl p-5 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
@@ -124,7 +118,7 @@ export function SearchJobsBoard() {
           <div>
             <h2 className="text-lg font-black tracking-tight text-foreground">검색 작업</h2>
             <p className="text-sm text-muted-foreground">
-              화면을 닫아도 워커가 손 안 댄 품번을 최대 500개까지 모읍니다. 진행 중이어도 지금까지 모인 결과를 바로 볼 수 있습니다.
+                화면을 닫아도 워커가 손 안 댄 품번을 최대 500개까지 모읍니다. 결과 보기는 새 탭에서 열리며, 여러 작업을 동시에 두고 전환할 수 있습니다.
             </p>
           </div>
         </div>
@@ -176,8 +170,9 @@ export function SearchJobsBoard() {
         <div className="bg-amber-500/8 border border-amber-500/25 text-amber-800 rounded-xl px-4 py-3 text-sm">
           <p className="font-bold">대기 중인 검색을 집어갈 워커가 없습니다.</p>
           <p className="text-[13px] mt-1 leading-relaxed text-amber-800/80">
-            로컬은 터미널에서 <code className="font-mono font-bold">pnpm worker</code>를 켜 두세요.
-            <code className="font-mono">pnpm dev</code>만으로는 큐가 진행되지 않습니다.
+            로컬은 <code className="font-mono font-bold">pnpm dev</code>가 워커를 같이 켭니다.
+            이미 Next만 켜 둔 상태면 개발 서버를 재시작하거나 터미널에서{" "}
+            <code className="font-mono font-bold">pnpm worker</code>를 켜 두세요.
             배포 환경은 Vercel Cron과 <code className="font-mono">CRON_SECRET</code>을 확인하세요.
           </p>
         </div>
@@ -272,14 +267,16 @@ export function SearchJobsBoard() {
                         <td className="px-5 py-4">
                           <div className="flex items-center justify-end gap-1.5">
                             {hasJobResults(job) && (
-                              <button
-                                type="button"
-                                onClick={() => openResults(job)}
+                              <Link
+                                href={`/dashboard/jobs/${job.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="새 탭에서 열기"
                                 className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-bold transition-colors"
                               >
                                 결과 보기
                                 <ChevronRight size={13} />
-                              </button>
+                              </Link>
                             )}
 
                             {isJobActive(job.status) && (

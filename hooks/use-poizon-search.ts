@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { searchPoizonItems, searchPoizonByBrand, getSpuStatistics } from "@/app/actions/poizon";
 import {
   enqueueSearchJob,
@@ -37,7 +36,12 @@ import {
   type SearchJobItemRecord,
 } from "@/types/search-job";
 
+export type SearchBoardVariant = "live" | "job";
+
 export interface UsePoizonSearchOptions {
+  variant?: SearchBoardVariant;
+  /** 검색 작업 보드에서만 사용. 라이브 조회는 읽지 않는다. */
+  jobId?: string | null;
   excludeSkippedOnSearch: boolean;
   excludeReviewedOnSearch: boolean;
   mergeSearchExclusionContext: (ctx: SearchExclusionContext) => void;
@@ -48,18 +52,21 @@ export interface UsePoizonSearchOptions {
 }
 
 /**
- * 품번/브랜드 검색, 백그라운드 잡 등록, `?job=` 결과 로드, 브랜드 더 보기.
+ * 품번/브랜드 검색, 백그라운드 잡 등록, 잡 결과 로드(job variant), 브랜드 더 보기.
+ * live와 job은 인스턴스를 분리해 items를 공유하지 않는다.
  */
 export function usePoizonSearch(options: UsePoizonSearchOptions) {
-  const searchParams = useSearchParams();
+  const variant = options.variant ?? "live";
   const { refresh: refreshJobs } = useSearchJobs();
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const searchRunIdRef = useRef(0);
 
   const [keyword, setKeyword] = useState("");
   const [searchType, setSearchType] = useState<"article" | "brand">("article");
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSearchInFlight, setIsSearchInFlight] = useState(false);
   const [isEnqueuing, setIsEnqueuing] = useState(false);
   const [loadedJobId, setLoadedJobId] = useState<string | null>(null);
   const [items, setItems] = useState<any[]>([]);
@@ -83,6 +90,12 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
 
   useEffect(() => {
     setSearchHistory(readSearchHistory());
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      searchRunIdRef.current += 1;
+    };
   }, []);
 
   const handleBackgroundSearch = async () => {
@@ -110,7 +123,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
       setSearchHistory(addSearchHistory(searchKeyword, searchType));
       setKeyword("");
       optionsRef.current.showFeedback(
-        "백그라운드 수집을 등록했습니다. 손 안 댄 품번을 최대 500개까지 모읍니다. 로컬은 `pnpm worker`가 켜져 있어야 진행됩니다."
+        "백그라운드 수집을 등록했습니다. 손 안 댄 품번을 최대 500개까지 모읍니다."
       );
       void refreshJobs();
     } catch (err: any) {
@@ -120,9 +133,10 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
     }
   };
 
-  const jobIdParam = searchParams.get("job");
+  const jobId = options.jobId ?? null;
   useEffect(() => {
-    if (!jobIdParam || loadedJobId === jobIdParam) return;
+    if (variant !== "job") return;
+    if (!jobId || loadedJobId === jobId) return;
 
     let cancelled = false;
 
@@ -130,7 +144,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
       setIsLoading(true);
       setError(null);
       try {
-        const res = await getSearchJobDetail(jobIdParam);
+        const res = await getSearchJobDetail(jobId);
         if (cancelled) return;
 
         if (!res.success || !res.job || !res.items) {
@@ -150,7 +164,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
           if (res.job.options.brandId != null) setCachedBrandId(res.job.options.brandId);
         }
 
-        setLoadedJobId(jobIdParam);
+        setLoadedJobId(jobId);
         optionsRef.current.showFeedback(
           `검색 작업 결과 ${res.items.length}건을 불러왔습니다.`
         );
@@ -164,7 +178,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
     return () => {
       cancelled = true;
     };
-  }, [jobIdParam, loadedJobId]);
+  }, [variant, jobId, loadedJobId]);
 
   const handleSearch = async (
     page: number = 1,
@@ -189,7 +203,11 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
       setSearchHistory(addSearchHistory(searchKeyword, activeType));
     }
 
+    const runId = ++searchRunIdRef.current;
+    const stale = () => runId !== searchRunIdRef.current;
+
     setIsLoading(true);
+    setIsSearchInFlight(true);
     setError(null);
 
     try {
@@ -199,6 +217,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
 
         const searchPromises = searchTerms.map(term => searchPoizonItems(term));
         const searchResults = await Promise.all(searchPromises);
+        if (stale()) return;
 
         const validItemDataList: { data: any, term: string }[] = [];
         const spuIdsForStats: number[] = [];
@@ -221,6 +240,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
             getSpuStatistics(spuIdsForStats, ["KR"]),
             getSpuStatistics(spuIdsForStats, ["CN"]),
           ]);
+          if (stale()) return;
 
           const { statsMapKR, statsMapCN } = buildStatsMaps(statsResKR, statsResCN);
 
@@ -234,6 +254,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
         });
 
         const curExcludedRes = await getExcludedArticles();
+        if (stale()) return;
         const curExcluded = curExcludedRes.success && curExcludedRes.data ? curExcludedRes.data.map((r: any) => r.article_number) : [];
         setExcludedArticles(curExcluded);
         const filteredItems = newItems.filter(item => !curExcluded.includes(item.articleNumber));
@@ -251,6 +272,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
           excludeSkipped: excludeSkippedOnSearch,
           excludeReviewed: excludeReviewedOnSearch,
         });
+        if (stale()) return;
         mergeSearchExclusionContext(exclusion);
 
         if (exclusion.excludedCount > 0) {
@@ -286,6 +308,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
         };
 
         const res = await searchPoizonByBrand(searchKeyword, apiPage, pageSize, brandIdToUse);
+        if (stale()) return;
         if (!res.success || !res.data) {
           setError(res.error || "검색 무효");
           return;
@@ -318,6 +341,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
             getSpuStatistics(spuIds, ["KR"]),
             getSpuStatistics(spuIds, ["CN"]),
           ]);
+          if (stale()) return;
           const { statsMapKR, statsMapCN } = buildStatsMaps(statsResKR, statsResCN);
           enrichedResults = results.map((item) => {
             const merged = { ...item };
@@ -332,6 +356,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
         }
 
         const curExcludedRes = await getExcludedArticles();
+        if (stale()) return;
         const curExcluded =
           curExcludedRes.success && curExcludedRes.data
             ? curExcludedRes.data.map((r: any) => r.article_number)
@@ -349,6 +374,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
 
         const spuKeys = [...new Set(uniqueBrandItems.map(getSpuKeyFromItem).filter(Boolean))];
         const exclusionCtx = await loadSearchExclusionContext(exclusionOptions, spuKeys);
+        if (stale()) return;
         const { items: itemsToAdd, excludedCount } = filterItemsBySearchExclusion(
           uniqueBrandItems,
           exclusionOptions,
@@ -389,11 +415,21 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
         }
       }
     } catch (err: any) {
-      setError(err.message);
+      if (!stale()) setError(err.message);
     } finally {
-      setIsLoading(false);
+      if (!stale()) {
+        setIsLoading(false);
+        setIsSearchInFlight(false);
+      }
     }
   };
+
+  const stopSearch = useCallback(() => {
+    searchRunIdRef.current += 1;
+    setIsLoading(false);
+    setIsLoadingMore(false);
+    setIsSearchInFlight(false);
+  }, []);
 
   const handleLoadMore = async () => {
     if (isLoadingMore || isLoading) return;
@@ -475,6 +511,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
     searchHistory,
     setSearchHistory,
     isLoading,
+    isSearchInFlight,
     isEnqueuing,
     items,
     setItems,
@@ -487,6 +524,7 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
     brandHint,
     setExcludedArticles,
     handleSearch,
+    stopSearch,
     handleBackgroundSearch,
     handleLoadMore,
     handleMergeActedItems,

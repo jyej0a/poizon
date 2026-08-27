@@ -21,6 +21,17 @@ export function resolveCnLeakOrGlobalMin(
   return cnLeakPrice(rec) ?? rec?.globalMinPrice;
 }
 
+/** 입찰 입력에 넣을 숫자 문자열. 노출 보장가 우선, 없으면 화면에 보이는 노출가 폴백 */
+export function exposureBidInputAmount(
+  rec: RecommendBidPriceData | null | undefined,
+  fallbackPrice?: string | number
+): string | undefined {
+  const preferred = resolveCnLeakOrGlobalMin(rec) ?? fallbackPrice;
+  if (preferred == null || preferred === "" || preferred === "—") return undefined;
+  const num = String(preferred).replace(/[^0-9]/g, "");
+  return num || undefined;
+}
+
 export function resolveExposurePriceValue(
   rec: RecommendBidPriceData | null | undefined,
   fallbackPrice: string | number | undefined

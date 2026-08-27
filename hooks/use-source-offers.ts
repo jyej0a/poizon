@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSourceOffers } from "@/app/actions/source-offers";
 import type { SearchJobItemRecord } from "@/types/search-job";
 import type { SourceOffer } from "@/types/source-offer";
@@ -20,18 +20,28 @@ export function useSourceOffers() {
   sourceOffersRef.current = sourceOffers;
   const loadingSourceOffersRef = useRef(loadingSourceOffers);
   loadingSourceOffersRef.current = loadingSourceOffers;
+  const fetchGenerationRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      fetchGenerationRef.current += 1;
+    };
+  }, []);
 
   const fetchSourceOffersForArticle = useCallback(async (articleNumber: string) => {
     if (!articleNumber) return;
+    const generation = fetchGenerationRef.current;
     setLoadingSourceOffers((prev) => ({ ...prev, [articleNumber]: true }));
     try {
       const res = await getSourceOffers(articleNumber);
+      if (generation !== fetchGenerationRef.current) return;
       if (res.success && res.data) {
         setSourceOffers((prev) => ({ ...prev, [articleNumber]: res.data }));
       }
     } catch (e) {
       console.error("Failed to fetch source offers", e);
     } finally {
+      if (generation !== fetchGenerationRef.current) return;
       setLoadingSourceOffers((prev) => ({ ...prev, [articleNumber]: false }));
     }
   }, []);

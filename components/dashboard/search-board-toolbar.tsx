@@ -3,6 +3,8 @@
 import {
   AlertCircle,
   Bell,
+  ChevronLeft,
+  CircleStop,
   Clock,
   Gavel,
   Inbox,
@@ -16,6 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DashboardViewTabs,
@@ -29,6 +32,7 @@ import {
   removeSearchHistory,
   type SearchHistoryEntry,
 } from "@/lib/search/search-history";
+import type { SearchBoardVariant } from "@/hooks/use-poizon-search";
 
 export const toolbarBtn =
   "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-[color,background-color,transform] motion-safe:active:scale-[0.98]";
@@ -36,6 +40,7 @@ export const toolbarBtnOutline = `${toolbarBtn} border border-border bg-backgrou
 export const toolbarBtnGhost = `${toolbarBtn} border border-transparent hover:bg-secondary/60 text-muted-foreground`;
 
 export interface SearchBoardToolbarProps {
+  variant?: SearchBoardVariant;
   searchType: "article" | "brand";
   onSearchTypeChange: (type: "article" | "brand") => void;
   keyword: string;
@@ -49,6 +54,9 @@ export interface SearchBoardToolbarProps {
   onSearch: () => void;
   onHistorySearch: (entry: SearchHistoryEntry) => void;
   onBackgroundSearch: () => void;
+  onStopSearch?: () => void;
+  canStopSearch?: boolean;
+  jobKeyword?: string;
   error: string | null;
   workspaceView: WorkspaceView;
   onWorkspaceViewChange: (view: WorkspaceView) => void;
@@ -86,6 +94,7 @@ export interface SearchBoardToolbarProps {
 
 export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
   const {
+    variant = "live",
     searchType,
     onSearchTypeChange,
     keyword,
@@ -99,6 +108,9 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
     onSearch,
     onHistorySearch,
     onBackgroundSearch,
+    onStopSearch,
+    canStopSearch = false,
+    jobKeyword,
     error,
     workspaceView,
     onWorkspaceViewChange,
@@ -136,14 +148,41 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
 
   return (
     <div
-      className={`shrink-0 px-4 py-3 border-b border-border/40 transition-colors backdrop-blur-md ${
+      className={`relative z-30 shrink-0 px-4 py-3 border-b border-border/40 transition-colors backdrop-blur-md ${
         isInputFocused ? "bg-primary/[0.06]" : "bg-background/45"
       }`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.18em]">
-          Search
+          {variant === "job" ? "Job" : "Search"}
         </span>
+        {variant === "job" ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Link
+              href="/dashboard/jobs"
+              className={`${toolbarBtnOutline} shrink-0`}
+            >
+              <ChevronLeft size={13} />
+              목록으로
+            </Link>
+            <p className="min-w-0 truncate text-xs text-foreground">
+              <span className="font-semibold">검색 작업 결과</span>
+              {jobKeyword ? (
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {searchType === "brand" ? "브랜드" : "품번"} {jobKeyword}
+                </span>
+              ) : null}
+            </p>
+            {isLoading && <Loader2 size={13} className="animate-spin text-primary shrink-0" />}
+            {error && (
+              <div className="hidden lg:flex items-center gap-1.5 text-destructive font-medium text-xs truncate">
+                <AlertCircle size={13} className="shrink-0" />
+                {error}
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="flex bg-secondary/40 p-0.5 rounded-lg shrink-0 h-8">
             <button
@@ -254,8 +293,19 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
             disabled={isLoading || !keyword.trim()}
             className={`${toolbarBtn} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 shrink-0`}
           >
-            {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+            {isLoading && canStopSearch ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
             조회
+          </button>
+          <button
+            type="button"
+            onClick={onStopSearch}
+            disabled={!canStopSearch}
+            title="진행 중인 조회만 멈춥니다. 이미 모인 목록은 유지됩니다. 검색 화면을 나가도 조회는 중단됩니다."
+            aria-label="조회 중단"
+            className={`${toolbarBtn} border border-border/60 bg-background hover:bg-secondary/60 disabled:opacity-40 shrink-0`}
+          >
+            <CircleStop size={13} />
+            중단
           </button>
           <button
             type="button"
@@ -274,6 +324,7 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

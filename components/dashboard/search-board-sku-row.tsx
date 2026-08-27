@@ -5,7 +5,7 @@ import { getChildSkuIds, resolveSkuId } from "@/lib/search/search-item";
 import { skuAverageAmount, skuOfferProfit, skuOptionLabel } from "@/lib/search/sku-display";
 import { formatSalesVolume, getSkuSalesValue } from "@/lib/utils/sales-volume";
 import { formatExposurePrice, resolveExposurePriceValue } from "@/lib/utils/exposure-price";
-import { computeBidVsCostMargin, recommendBidFromCost } from "@/lib/utils/calculate-margin";
+import { computeBidVsCostMargin } from "@/lib/utils/calculate-margin";
 import { formatActivityLine } from "@/lib/utils/sku-activity";
 import { getSkuRowVisualState, searchBoardCellClass, SEARCH_BOARD_TD_HOVER } from "@/lib/utils/sku-row-visual";
 import { cn } from "@/lib/utils";
@@ -54,31 +54,34 @@ function BidNetHint({ netProfit }: { netProfit: number | null }) {
   );
 }
 
-function RecommendBidHint({
+function BidActionButton({
   skuId,
-  recommended,
-  targetRate,
+  spuId,
+  bidPrice,
+  compact,
 }: {
   skuId: string;
-  recommended: number | null;
-  targetRate: number | undefined;
+  spuId: string | number;
+  bidPrice?: string;
+  compact?: boolean;
 }) {
-  const { handleBiddingPriceChange } = useSearchBoardTable();
-  if (recommended == null) return null;
-  const rateLabel = targetRate != null && Number.isFinite(Number(targetRate)) ? ` · ${Number(targetRate)}%` : "";
+  const { handleSingleBid, isBidding } = useSearchBoardTable();
   return (
     <button
       type="button"
       onClick={(e) => {
+        e.preventDefault();
         e.stopPropagation();
-        handleBiddingPriceChange(skuId, String(recommended));
+        handleSingleBid(skuId, spuId);
       }}
-      className="text-[8px] text-primary/70 mt-0.5 font-bold tracking-tighter hover:text-primary hover:underline"
-      aria-label={`목표 마진 권장 입찰가 ₩${recommended.toLocaleString()} 채우기`}
-      title={`원가 대비 목표 마진을 만족하는 입찰가 ₩${recommended.toLocaleString()}`}
+      disabled={!bidPrice || isBidding}
+      className={cn(
+        "relative z-[1] h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 motion-safe:active:scale-95 disabled:opacity-20 motion-safe:transition-all uppercase tracking-wider italic shrink-0",
+        compact ? "px-3" : "px-4"
+      )}
+      aria-label="이 옵션 입찰"
     >
-      권장 ₩{recommended.toLocaleString()}
-      {rateLabel}
+      BID
     </button>
   );
 }
@@ -100,13 +103,13 @@ export function SearchBoardSkuRow({
 }: SearchBoardSkuRowProps) {
   const ctx = useSearchBoardTable();
   const nested = variant === "nested";
-  const rec = ctx.skuRecommendations[sku.skuId];
-  const isLoadingRec = ctx.loadingRecommendations[sku.skuId];
+  const skuKey = resolveSkuId(sku);
+  const rec = ctx.skuRecommendations[skuKey] ?? ctx.skuRecommendations[sku.skuId];
+  const isLoadingRec = !!(ctx.loadingRecommendations[skuKey] || ctx.loadingRecommendations[sku.skuId]);
   const propsStr = skuOptionLabel(sku);
-  const bidPrice = ctx.biddingPrices[sku.skuId];
+  const bidPrice = ctx.biddingPrices[skuKey] ?? ctx.biddingPrices[sku.skuId];
   const naverItem = getBestSourceOffer(ctx.sourceOffers, item.articleNumber);
   const isBiddable = item.raw?.userCanBidding !== false;
-  const skuKey = resolveSkuId(sku);
   const isSkipped = ctx.skippedSkuIds.has(skuKey);
   const skuStatus = ctx.skuStatuses[skuKey];
   const { systemBid, manualBid } = ctx.getSkuBidViews(skuKey, skuStatus);
@@ -127,8 +130,6 @@ export function SearchBoardSkuRow({
   const highProfit = isHighProfit(profit?.profit, ctx.systemSettings);
   const margin = computeBidVsCostMargin(bidPrice, naverPrice ?? undefined, ctx.systemSettings);
   const netProfit = margin?.netProfit ?? null;
-  const recommendedBid = recommendBidFromCost(naverPrice, ctx.systemSettings);
-  const targetRate = ctx.systemSettings?.target_margin_rate;
   const watchPrice = skuStatus?.watchPrice ?? null;
   const watchHit = isPriceWatchHit(watchPrice, currentExposureAmount(rec, skuPrice));
 
@@ -141,9 +142,9 @@ export function SearchBoardSkuRow({
     <tr className={rowClass}>
       <td className={cn(cell, rowVisual.accentClass, "relative")}>
         <SkuRowManageCell
-          skuId={sku.skuId}
-          checked={!!ctx.selectedSkus[sku.skuId]}
-          onCheckedChange={() => ctx.toggleSkuSelection(sku.skuId)}
+          skuId={skuKey}
+          checked={!!ctx.selectedSkus[skuKey]}
+          onCheckedChange={() => ctx.toggleSkuSelection(skuKey)}
           systemBid={systemBid}
           manualBid={manualBid}
           onManualBidToggle={() => ctx.handleToggleSkuManualBid(skuKey, spuIdKey)}
@@ -328,7 +329,7 @@ export function SearchBoardSkuRow({
               onClick={(e) => {
                 e.stopPropagation();
                 const exposurePr = resolveExposurePriceValue(rec, skuPrice);
-                ctx.handleBiddingPriceChange(sku.skuId, String(exposurePr));
+                ctx.handleBiddingPriceChange(skuKey, String(exposurePr));
               }}
             >
               <span className="inline-flex items-center gap-1">
@@ -387,25 +388,13 @@ export function SearchBoardSkuRow({
               saving={!!ctx.savingWatch[skuKey]}
               onToggle={() => ctx.handleToggleSkuWatch(skuKey, spuIdKey, skuPrice)}
             />
-            <div className="flex flex-col items-center justify-center flex-1">
+            <div className="flex flex-col items-center justify-center flex-1 min-w-0">
               <div className="w-full max-w-[100px] mx-auto">
-                <BidPriceInput skuId={sku.skuId} bidPrice={bidPrice} />
+                <BidPriceInput skuId={skuKey} bidPrice={bidPrice} />
               </div>
-              {bidPrice ? (
-                <BidNetHint netProfit={netProfit} />
-              ) : (
-                <RecommendBidHint skuId={sku.skuId} recommended={recommendedBid} targetRate={targetRate} />
-              )}
+              {bidPrice ? <BidNetHint netProfit={netProfit} /> : null}
             </div>
-            <button
-              type="button"
-              onClick={() => ctx.handleSingleBid(sku.skuId, item.id)}
-              disabled={!bidPrice || ctx.isBidding}
-              className="px-3 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 motion-safe:active:scale-95 disabled:opacity-20 motion-safe:transition-all uppercase tracking-wider italic shrink-0"
-              aria-label="이 옵션 입찰"
-            >
-              BID
-            </button>
+            <BidActionButton skuId={skuKey} spuId={item.id} bidPrice={bidPrice} compact />
           </div>
         ) : (
           <div className="flex items-center justify-center gap-1.5">
@@ -415,23 +404,11 @@ export function SearchBoardSkuRow({
               saving={!!ctx.savingWatch[skuKey]}
               onToggle={() => ctx.handleToggleSkuWatch(skuKey, spuIdKey, skuPrice)}
             />
-            <div className="flex-1 max-w-[120px] flex flex-col items-center">
-              <BidPriceInput skuId={sku.skuId} bidPrice={bidPrice} />
-              {bidPrice ? (
-                <BidNetHint netProfit={netProfit} />
-              ) : (
-                <RecommendBidHint skuId={sku.skuId} recommended={recommendedBid} targetRate={targetRate} />
-              )}
+            <div className="flex-1 max-w-[120px] flex flex-col items-center min-w-0">
+              <BidPriceInput skuId={skuKey} bidPrice={bidPrice} />
+              {bidPrice ? <BidNetHint netProfit={netProfit} /> : null}
             </div>
-            <button
-              type="button"
-              onClick={() => ctx.handleSingleBid(sku.skuId, item.id)}
-              disabled={!bidPrice || ctx.isBidding}
-              className="px-4 h-7 bg-primary text-primary-foreground rounded-md text-[10px] font-bold shadow-sm hover:brightness-110 motion-safe:active:scale-95 disabled:opacity-20 motion-safe:transition-all uppercase tracking-wider italic shrink-0"
-              aria-label="이 옵션 입찰"
-            >
-              BID
-            </button>
+            <BidActionButton skuId={skuKey} spuId={item.id} bidPrice={bidPrice} />
           </div>
         )}
       </td>

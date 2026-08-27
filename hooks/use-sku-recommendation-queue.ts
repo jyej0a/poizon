@@ -82,6 +82,15 @@ export function useSkuRecommendationQueue() {
 
   pumpRef.current = pumpRecommendationQueue;
 
+  useEffect(() => {
+    return () => {
+      recFetchQueueRef.current = [];
+      Object.keys(loadingRecommendationsRef.current).forEach((key) => {
+        cancelledRecsRef.current.add(key);
+      });
+    };
+  }, []);
+
   const queueRecommendationFetch = useCallback(
     (skuId: string | number) => {
       const key = String(skuId);

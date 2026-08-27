@@ -12,7 +12,7 @@ import { runWorkerTick } from "@/lib/search/worker-run";
  * 인증: `Authorization: Bearer $CRON_SECRET`
  * (Vercel Cron은 자동으로 이 헤더를 붙인다 — 프로젝트에 CRON_SECRET 설정 필요)
  *
- * 장시간 잡은 로컬 `pnpm worker`를 권장. 서버리스는 maxDuration 안에서만 완료된다.
+ * 장시간 잡은 로컬 `pnpm dev` 내장 워커 또는 `pnpm worker`를 권장. 서버리스는 maxDuration 안에서만 완료된다.
  */
 
 export const runtime = "nodejs";

@@ -285,8 +285,11 @@ pnpm dev
 ### 개발 명령어
 
 ```bash
-# 개발 서버 실행 (Turbopack)
+# 개발 서버 실행 (Turbopack). 검색 워커도 같이 기동되어 백그라운드 수집이 진행됩니다.
 pnpm dev
+
+# 검색 워커만 (Next 없이 큐 처리)
+pnpm worker
 
 # 프로덕션 빌드
 pnpm build

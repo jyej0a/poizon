@@ -1,5 +1,7 @@
 import { Sidebar } from "@/components/Sidebar";
 import { SearchJobsProvider } from "@/components/providers/search-jobs-provider";
+import { LegacyJobRedirect } from "@/components/dashboard/legacy-job-redirect";
+import { Suspense } from "react";
 
 export default function DashboardLayout({
   children,
@@ -21,6 +23,9 @@ export default function DashboardLayout({
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-5">
             <div className="mx-auto w-full h-full max-w-[none]">
+              <Suspense fallback={null}>
+                <LegacyJobRedirect />
+              </Suspense>
               {children}
             </div>
           </main>

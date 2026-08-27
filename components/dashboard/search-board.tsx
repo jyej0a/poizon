@@ -28,13 +28,13 @@ import {
 } from "@/lib/search/client-exclusion";
 import { refreshSearchItemPrices } from "@/app/actions/search-jobs";
 import type { SearchJobItemRecord } from "@/types/search-job";
-import { executeBidding, getExistingBidsForSkus, getBidHistoryBySkuIds, type BidPayload, type ExistingBidInfo, type ExecuteBiddingMode } from "@/app/actions/bidding";
+import { executeBidding, getBidHistoryBySkuIds, type BidPayload, type ExistingBidInfo, type ExecuteBiddingMode } from "@/app/actions/bidding";
 import { getSystemSettings } from "@/app/actions/settings";
 import { addExcludedArticle } from "@/app/actions/excluded-articles";
-import { usePoizonSearch } from "@/hooks/use-poizon-search";
+import { usePoizonSearch, type SearchBoardVariant } from "@/hooks/use-poizon-search";
 import { useSkuRecommendationQueue } from "@/hooks/use-sku-recommendation-queue";
 import { useSourceOffers } from "@/hooks/use-source-offers";
-import { resolveCnLeakOrGlobalMin } from "@/lib/utils/exposure-price";
+import { exposureBidInputAmount } from "@/lib/utils/exposure-price";
 import { getSkippedItems, addSkippedItems, removeSkippedItems } from "@/app/actions/skipped-items";
 import { getItemStatuses, setItemHandled, setItemMemo, type ItemStatus } from "@/app/actions/item-status";
 import { getSkuStatuses, getSkuStatusesBySpuIds, setSkuMemo, setSkuManualBidMarked, setSkuStockMarked, setSkuWatchPrice, setSkuHandled, setManySkuHandled } from "@/app/actions/sku-status";
@@ -59,7 +59,13 @@ import {
 } from "./search-board-table-context";
 import { SourceOfferResultsDialog } from "./source-offer-results-dialog";
 
-export function SearchBoard() {
+export function SearchBoard({
+  variant = "live",
+  jobId = null,
+}: {
+  variant?: SearchBoardVariant;
+  jobId?: string | null;
+}) {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   
   // 입찰가 액션용 State
@@ -164,6 +170,7 @@ export function SearchBoard() {
     searchHistory,
     setSearchHistory,
     isLoading,
+    isSearchInFlight,
     isEnqueuing,
     items,
     setItems,
@@ -176,12 +183,16 @@ export function SearchBoard() {
     brandHint,
     setExcludedArticles,
     handleSearch,
+    stopSearch,
     handleBackgroundSearch,
     handleLoadMore,
     handleMergeActedItems,
     clearSearchResults,
     loadedJobId,
+    lastBrandKeyword,
   } = usePoizonSearch({
+    variant,
+    jobId,
     excludeSkippedOnSearch,
     excludeReviewedOnSearch,
     mergeSearchExclusionContext,
@@ -473,21 +484,34 @@ export function SearchBoard() {
   };
 
   React.useEffect(() => {
-    setBiddingPrices(prev => {
+    setBiddingPrices((prev) => {
       const next = { ...prev };
       let changed = false;
-      Object.keys(skuRecommendations).forEach(skuId => {
-        if (!next[skuId]) {
-          const exposurePr = resolveCnLeakOrGlobalMin(skuRecommendations[skuId]);
-          if (exposurePr) {
-            next[skuId] = String(exposurePr);
+
+      items.forEach((item) => {
+        (item.skuDetails || []).forEach((sku: any) => {
+          const skuId = resolveSkuId(sku);
+          if (!skuId) return;
+          const fallback = skuListPrice(sku);
+          const recAmount = exposureBidInputAmount(skuRecommendations[skuId]);
+          const fallbackAmount = exposureBidInputAmount(undefined, fallback);
+          const preferred = recAmount ?? fallbackAmount;
+          if (!preferred) return;
+          if (!next[skuId]) {
+            next[skuId] = preferred;
+            changed = true;
+            return;
+          }
+          if (recAmount && fallbackAmount && next[skuId] === fallbackAmount && recAmount !== fallbackAmount) {
+            next[skuId] = recAmount;
             changed = true;
           }
-        }
+        });
       });
+
       return changed ? next : prev;
     });
-  }, [skuRecommendations]);
+  }, [skuRecommendations, items]);
 
   const handleToggleSkip = async (itemOrSku: any, isSku = false) => {
     // 1. 토글할 SKU ID 목록을 먼저 확정하옵니다.
@@ -1082,18 +1106,45 @@ export function SearchBoard() {
   };
 
   const runBidding = async (payloads: BidPayload[], mode: ExecuteBiddingMode = "normal") => {
+    if (payloads.length === 0) return { success: true as const, data: [] };
     const enriched = payloads.map((p) => ({
       ...p,
       sellerBiddingNo: p.sellerBiddingNo,
       sizeInfo: p.sizeInfo || resolveSkuSizeInfo(p.skuId),
     }));
     const res = await executeBidding(enriched, { mode });
-    if (res.success) {
-      showFeedback(formatBidFeedback(res.data || [], res.error));
-      applyBidSuccessToState(payloads);
-    } else {
-      showFeedback(formatBidFeedback(res.data || [], res.data?.[0]?.message || res.error));
-      if (res.data?.some((r) => r.success)) applyBidSuccessToState(payloads.filter((p) => res.data?.find((r) => String(r.skuId) === String(p.skuId) && r.success)));
+    const results = res.data || [];
+    const duplicates = mode === "normal" ? results.filter((r) => r.needsDuplicateConfirm) : [];
+    const succeeded = results.filter((r) => r.success);
+
+    if (duplicates.length > 0) {
+      const conflicts: DuplicateBidConflict[] = [];
+      for (const r of duplicates) {
+        const payload = payloads.find((p) => String(p.skuId) === String(r.skuId));
+        if (!payload) continue;
+        const existing = r.existingBid ?? {
+          skuId: Number(payload.skuId),
+          bidPrice: 0,
+          bidDate: "",
+          source: "poizon" as const,
+        };
+        conflicts.push({
+          payload,
+          existing,
+          sizeInfo: existing.sizeInfo || resolveSkuSizeInfo(payload.skuId),
+        });
+      }
+      if (conflicts.length > 0) setDuplicateBidModal({ conflicts });
+    }
+
+    if (succeeded.length > 0) {
+      applyBidSuccessToState(
+        payloads.filter((p) => succeeded.some((r) => String(r.skuId) === String(p.skuId)))
+      );
+    }
+
+    if (!(duplicates.length > 0 && results.every((r) => r.needsDuplicateConfirm))) {
+      showFeedback(formatBidFeedback(results, results[0]?.message || res.error));
     }
     return res;
   };
@@ -1116,18 +1167,23 @@ export function SearchBoard() {
     return undefined;
   };
 
-  const splitPayloadsByExistingBids = async (payloads: BidPayload[]) => {
-    const existingRes = await getExistingBidsForSkus(payloads.map((p) => p.skuId));
+  const splitPayloadsByExistingBids = (payloads: BidPayload[]) => {
     const conflicts: DuplicateBidConflict[] = [];
     const nonConflicts: BidPayload[] = [];
 
     for (const payload of payloads) {
-      const existing = existingRes.data?.[String(payload.skuId)];
-      if (existing) {
+      const history = bidHistoryBySku[String(payload.skuId)];
+      if (history?.source === "system") {
         conflicts.push({
           payload,
-          existing,
-          sizeInfo: resolveSkuSizeInfo(payload.skuId) || existing.sizeInfo,
+          existing: {
+            skuId: Number(payload.skuId),
+            bidPrice: history.price ?? 0,
+            bidDate: history.date,
+            sizeInfo: history.sizeInfo,
+            source: "local",
+          },
+          sizeInfo: resolveSkuSizeInfo(payload.skuId) || history.sizeInfo,
         });
       } else {
         nonConflicts.push(payload);
@@ -1172,13 +1228,13 @@ export function SearchBoard() {
 
   const handleSingleBid = async (skuId: string | number, spuId: string | number) => {
     const priceStr = biddingPrices[String(skuId)];
-    if (!priceStr) return;
     const price = Number(priceStr);
-    
+    if (!priceStr || !Number.isFinite(price) || price <= 0) return;
+
     setIsBidding(true);
     try {
-      const payload: BidPayload = { skuId, spuId, price };
-      const { conflicts, nonConflicts } = await splitPayloadsByExistingBids([payload]);
+      const payload: BidPayload = { skuId: String(skuId), spuId, price };
+      const { conflicts, nonConflicts } = splitPayloadsByExistingBids([payload]);
 
       if (conflicts.length > 0) {
         setDuplicateBidModal({ conflicts });
@@ -1227,7 +1283,7 @@ export function SearchBoard() {
 
     setIsBidding(true);
     try {
-      const { conflicts, nonConflicts } = await splitPayloadsByExistingBids(payloads);
+      const { conflicts, nonConflicts } = splitPayloadsByExistingBids(payloads);
 
       if (nonConflicts.length > 0) {
         await runBidding(nonConflicts);
@@ -1712,6 +1768,7 @@ export function SearchBoard() {
       {/* Unified workspace card */}
       <div className="flex-1 min-h-0 glass-panel border border-border/60 rounded-xl flex flex-col overflow-hidden">
         <SearchBoardToolbar
+          variant={variant}
           searchType={searchType}
           onSearchTypeChange={setSearchType}
           keyword={keyword}
@@ -1730,6 +1787,9 @@ export function SearchBoard() {
             void handleSearch(1, false, { keyword: entry.keyword, type: entry.type });
           }}
           onBackgroundSearch={() => { void handleBackgroundSearch(); }}
+          onStopSearch={stopSearch}
+          canStopSearch={isSearchInFlight || isLoadingMore}
+          jobKeyword={lastBrandKeyword}
           error={error}
           workspaceView={workspaceView}
           onWorkspaceViewChange={setWorkspaceView}
@@ -1772,7 +1832,7 @@ export function SearchBoard() {
             setOverflowOpen(false);
           }}
         />
-        {brandHint && brandHint.page > 0 && (
+        {variant === "live" && brandHint && brandHint.page > 0 && (
           <div className="shrink-0 px-4 py-1.5 border-b border-border/40 bg-background/40 backdrop-blur-md flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Clock size={12} className="text-primary/70" />
             이전에 <span className="font-bold text-foreground">{brandHint.page}페이지</span>까지 탐색했습니다

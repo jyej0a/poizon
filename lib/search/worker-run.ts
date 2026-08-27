@@ -1,6 +1,6 @@
 /**
  * 검색 잡 워커 코어.
- * 로컬 `pnpm worker` 루프와 `/api/cron/search-worker`가 동일한 claim·처리 경로를 쓴다.
+ * 로컬 워커 루프(`pnpm dev` / `pnpm worker`)와 `/api/cron/search-worker`가 동일한 claim·처리 경로를 쓴다.
  */
 
 import { createPoizonClientForUser } from "@/lib/api/poizon-credentials";

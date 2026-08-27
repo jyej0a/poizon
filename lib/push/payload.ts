@@ -19,7 +19,7 @@ export function buildSearchJobPushPayload(job: {
     failed: "검색 실패",
   };
 
-  const url = job.itemCount > 0 ? `/dashboard?job=${job.id}` : "/dashboard/jobs";
+  const url = job.itemCount > 0 ? `/dashboard/jobs/${job.id}` : "/dashboard/jobs";
   const body =
     job.status === "failed"
       ? `${job.keyword} · ${truncate(job.error || "수집에 실패했습니다.")}`
