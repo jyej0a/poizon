@@ -1,4 +1,4 @@
-import type { SourceOffer } from "@/types/source-offer";
+import { OFFER_AVAILABILITY, type SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 
@@ -76,6 +76,7 @@ export const nikeKrProvider: SourceOfferProvider = {
         title,
         link,
         image: product.colorwayImages?.squarishURL ?? product.colorwayImages?.portraitURL ?? null,
+        availability: OFFER_AVAILABILITY.unknown,
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

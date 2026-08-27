@@ -23,8 +23,9 @@ export function filterOffersByActiveSources(
 }
 
 /**
- * 여러 몰에서 품번 기준 오퍼를 모아 가격이 낮은 순 상위 10개를 만든다.
- * 같은 몰이라도 다른 상품/페이지면 중복 허용하되, 동일 링크는 dedupe한다.
+ * 여러 몰에서 품번 기준 오퍼를 모아 상위 10개를 만든다.
+ * 살 수 있는 오퍼를 품절보다 앞에 두고, 같은 몰이라도 다른 상품/페이지면
+ * 중복 허용하되 동일 링크는 dedupe한다.
  */
 export async function fetchTopSourceOffers(
   articleNumber: string,

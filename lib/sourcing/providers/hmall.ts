@@ -1,3 +1,4 @@
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
@@ -87,6 +88,7 @@ export const hmallProvider: SourceOfferProvider = {
         title,
         link: `https://www.hmall.com/md/pda/itemPtc?slitmCd=${encodeURIComponent(id)}`,
         image: imageUrl(id, item.orglImgNm),
+        availability: offerAvailability(soldOut),
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

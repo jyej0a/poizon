@@ -1,5 +1,6 @@
-import type { SourceOffer } from "@/types/source-offer";
+import { offerAvailability } from "@/lib/sourcing/availability";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
+import type { SourceOffer } from "@/types/source-offer";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 
 interface MusinsaGoods {
@@ -69,8 +70,9 @@ export const musinsaProvider: SourceOfferProvider = {
       const price = parsePrice(goods.finalPrice ?? goods.price);
       if (!price || !goods.goodsName || !goods.goodsLinkUrl) continue;
 
+      const soldOut = Boolean(goods.isSoldOut);
       const hints = [
-        goods.isSoldOut ? "품절" : null,
+        soldOut ? "품절" : null,
         goods.isAd ? "광고" : null,
         goods.brandName || null,
       ].filter(Boolean);
@@ -84,6 +86,7 @@ export const musinsaProvider: SourceOfferProvider = {
           ? goods.goodsLinkUrl
           : `https://www.musinsa.com${goods.goodsLinkUrl}`,
         image: goods.thumbnail ?? goods.imageUrl ?? null,
+        availability: offerAvailability(soldOut),
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

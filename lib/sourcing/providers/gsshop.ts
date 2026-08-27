@@ -1,3 +1,4 @@
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import {
   decodeHtmlText,
@@ -68,6 +69,7 @@ export const gsShopProvider: SourceOfferProvider = {
         title,
         link: productLink(prdId),
         image,
+        availability: offerAvailability(soldOut),
         availabilityHint: soldOut ? "품절" : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

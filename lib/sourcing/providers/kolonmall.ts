@@ -1,3 +1,4 @@
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
@@ -94,6 +95,7 @@ export const kolonMallProvider: SourceOfferProvider = {
         title: `${product.supplierBrandName ? `${product.supplierBrandName} ` : ""}${product.name} ${product.code}`,
         link: `https://www.kolonmall.com/Product/${encodeURIComponent(product.code)}`,
         image: product.representationImage ?? null,
+        availability: offerAvailability(product.soldOutYn === "Y"),
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

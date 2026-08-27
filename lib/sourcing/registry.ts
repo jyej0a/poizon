@@ -1,6 +1,7 @@
 import { abcMartProvider } from "@/lib/sourcing/providers/abcmart";
 import { twentyNineCmProvider } from "@/lib/sourcing/providers/29cm";
 import { elevenStProvider } from "@/lib/sourcing/providers/11st";
+import { brandiProvider } from "@/lib/sourcing/providers/brandi";
 import { cjOnstyleProvider } from "@/lib/sourcing/providers/cjonstyle";
 import { elandMallProvider } from "@/lib/sourcing/providers/elandmall";
 import { gmarketProvider } from "@/lib/sourcing/providers/gmarket";
@@ -15,7 +16,9 @@ import { lotteDepartmentProvider, lotteOnProvider } from "@/lib/sourcing/provide
 import { musinsaProvider } from "@/lib/sourcing/providers/musinsa";
 import { nikeKrProvider } from "@/lib/sourcing/providers/nike";
 import { ssgProvider } from "@/lib/sourcing/providers/ssg";
+import { uniqloKrProvider } from "@/lib/sourcing/providers/uniqlo";
 import { wconceptProvider } from "@/lib/sourcing/providers/wconcept";
+import { zigzagProvider } from "@/lib/sourcing/providers/zigzag";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 import type { SourceMallReliability } from "@/types/source-mall";
 
@@ -138,6 +141,24 @@ export const SOURCE_MALL_DEFINITIONS: SourceMallDefinition[] = [
     homepage: "https://www.hiver.co.kr",
     reliability: "ok",
     notes: "capi search/products. Authorization은 프론트 공개 guest 토큰(CM). 401 시 갱신",
+  },
+  {
+    provider: brandiProvider,
+    homepage: "https://www.brandi.co.kr",
+    reliability: "ok",
+    notes: "하이버와 같은 capi·게스트 토큰. 검색 HTML은 빈 SPA",
+  },
+  {
+    provider: zigzagProvider,
+    homepage: "https://zigzag.kr",
+    reliability: "ok",
+    notes: "GraphQL GetSearchResult (page_id=srp_item). 입점 셀러 사이트는 파싱하지 않음",
+  },
+  {
+    provider: uniqloKrProvider,
+    homepage: "https://www.uniqlo.com/kr",
+    reliability: "ok",
+    notes: "공식몰 commerce v5 products. 유니클로 품번(l1Id)에 강함",
   },
   {
     provider: gmarketProvider,

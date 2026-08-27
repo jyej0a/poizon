@@ -1,4 +1,4 @@
-import type { SourceOffer } from "@/types/source-offer";
+import { OFFER_AVAILABILITY, type SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 
@@ -88,9 +88,10 @@ export const cjOnstyleProvider: SourceOfferProvider = {
       if (seen.has(id)) continue;
       seen.add(id);
 
+      const soldOut = item.restockAlarmYn === "Y";
       const hints = [
         item.repBrandNm ?? null,
-        item.restockAlarmYn === "Y" ? "재입고알림" : null,
+        soldOut ? "재입고알림" : null,
       ].filter(Boolean);
 
       offers.push({
@@ -100,6 +101,7 @@ export const cjOnstyleProvider: SourceOfferProvider = {
         title,
         link: `https://display.cjonstyle.com/p/item/${encodeURIComponent(id)}`,
         image: imageUrl(item.pmgItemImgUrl),
+        availability: soldOut ? OFFER_AVAILABILITY.soldOut : OFFER_AVAILABILITY.unknown,
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

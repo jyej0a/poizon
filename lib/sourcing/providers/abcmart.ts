@@ -1,4 +1,5 @@
 import { mapWithConcurrency } from "@/lib/api/retry";
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import {
   decodeHtmlText,
@@ -258,6 +259,7 @@ export const abcMartProvider: SourceOfferProvider = {
         title,
         link,
         image: card.image ?? info?.productImage?.[0]?.imageUrl ?? null,
+        availability: offerAvailability(card.soldOut),
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

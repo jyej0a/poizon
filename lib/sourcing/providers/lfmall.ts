@@ -1,3 +1,4 @@
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
@@ -87,6 +88,7 @@ export const lfMallProvider: SourceOfferProvider = {
         title,
         link: `${PRODUCT_ORIGIN}/app/product/${encodeURIComponent(id)}`,
         image: product.representImage?.url ?? null,
+        availability: offerAvailability(Boolean(product.soldout)),
         availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
         normalizedArticleNumber: normalized,
         fetchedAt,

@@ -3,26 +3,22 @@ import type { SourceOffer } from "@/types/source-offer";
 import { normalizeArticleNumber, parsePrice } from "@/lib/sourcing/utils";
 import type { SourceOfferProvider } from "@/lib/sourcing/types";
 
-const SEARCH_API = "https://capi.hiver.co.kr/v1/web/search/products";
-const PRODUCT_ORIGIN = "https://www.hiver.co.kr";
+const SEARCH_API = "https://capi.brandi.co.kr/v1/web/search/products";
+const PRODUCT_ORIGIN = "https://www.brandi.co.kr";
 const BROWSER_UA = "Mozilla/5.0";
 
 /**
- * 하이버 프론트 번들(`CM`)의 공개 guest 토큰. axios 기본 Authorization과 같다.
- * 401이면 `_app` 청크의 `CM` 값을 이 상수에 맞춰 갱신한다.
+ * 브랜디·하이버는 같은 capi 게스트 토큰을 쓴다.
+ * 401이면 하이버 `_app` 청크의 `CM` 값을 이 상수에 맞춰 갱신한다.
  */
 const GUEST_TOKEN =
   "3b17176f2eb5fdffb9bafdcc3e4bc192b013813caddccd0aad20c23ed272f076_1423639497";
 
-interface HiverSeller {
+interface BrandiSeller {
   name?: string;
 }
 
-interface HiverBrand {
-  brand_name?: string;
-}
-
-interface HiverProduct {
+interface BrandiProduct {
   id?: string | number;
   name?: string;
   price?: number;
@@ -31,22 +27,21 @@ interface HiverProduct {
   is_sell?: boolean;
   image_url?: string;
   web_image_url?: string;
-  seller?: HiverSeller;
-  brand?: HiverBrand;
+  seller?: BrandiSeller;
 }
 
-interface HiverSearchResponse {
+interface BrandiSearchResponse {
   meta?: { code?: number; message?: string };
-  data?: { total_count?: number; products?: HiverProduct[] };
+  data?: { total_count?: number; products?: BrandiProduct[] };
 }
 
 /**
- * 검색 HTML은 빈 SPA다. 페이지가 쓰는 `capi.hiver.co.kr/.../search/products/{q}` 를 호출한다.
- * `hiver-api.brandi.biz/v1/web/products` 는 protobuf `query.type` 이 필요해 쓰지 않는다.
+ * 검색 HTML은 빈 SPA다. 페이지가 쓰는 `capi.brandi.co.kr/.../search/products/{q}` 를 호출한다.
+ * 하이버와 동일 게스트 토큰. 품번 미판매는 `empty`.
  */
-export const hiverProvider: SourceOfferProvider = {
-  key: "hiver",
-  label: "하이버",
+export const brandiProvider: SourceOfferProvider = {
+  key: "brandi",
+  label: "브랜디",
   async fetchOffers(articleNumber: string) {
     const normalized = normalizeArticleNumber(articleNumber);
     const keyword = normalized.replace(/[/|]/g, "").trim();
@@ -55,7 +50,7 @@ export const hiverProvider: SourceOfferProvider = {
     url.searchParams.set("total-count", "true");
     url.searchParams.set("offset", "0");
     url.searchParams.set("limit", "30");
-    url.searchParams.set("service-type", "hiver");
+    url.searchParams.set("service-type", "brandi");
 
     const response = await fetch(url, {
       headers: {
@@ -70,12 +65,12 @@ export const hiverProvider: SourceOfferProvider = {
     });
 
     if (!response.ok) {
-      throw new Error(`하이버 응답 오류 (${response.status})`);
+      throw new Error(`브랜디 응답 오류 (${response.status})`);
     }
 
-    const body = (await response.json()) as HiverSearchResponse;
+    const body = (await response.json()) as BrandiSearchResponse;
     if (body.meta?.code && body.meta.code !== 200) {
-      throw new Error(`하이버 응답 실패 (${body.meta.message ?? body.meta.code})`);
+      throw new Error(`브랜디 응답 실패 (${body.meta.message ?? body.meta.code})`);
     }
 
     const fetchedAt = new Date().toISOString();
@@ -94,14 +89,13 @@ export const hiverProvider: SourceOfferProvider = {
       seen.add(id);
 
       const hints = [
-        product.brand?.brand_name ?? null,
         product.seller?.name ?? null,
         product.is_sell === false ? "품절" : null,
       ].filter(Boolean);
 
       offers.push({
-        source: "hiver",
-        sourceLabel: "하이버",
+        source: "brandi",
+        sourceLabel: "브랜디",
         price,
         title,
         link: `${PRODUCT_ORIGIN}/products/${encodeURIComponent(id)}`,

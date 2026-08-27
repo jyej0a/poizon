@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  extraAvailabilityHint,
+  isSoldOutOffer,
+} from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import {
   Dialog,
@@ -24,7 +28,13 @@ export function SourceOfferResultsDialog({
   items,
   articleNumber,
 }: SourceOfferResultsDialogProps) {
-  const sortedItems = items ? [...items].sort((a, b) => a.price - b.price) : [];
+  const sortedItems = items
+    ? [...items].sort((a, b) => {
+        const soldDiff = Number(isSoldOutOffer(a)) - Number(isSoldOutOffer(b));
+        if (soldDiff !== 0) return soldDiff;
+        return a.price - b.price;
+      })
+    : [];
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -46,50 +56,65 @@ export function SourceOfferResultsDialog({
             </div>
           ) : (
             <ul className="divide-y divide-secondary/20">
-              {sortedItems.map((item, i) => (
-                <li key={`${item.source}-${item.link}-${i}`}>
-                  <a
-                    href={item.link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-500/[0.04] transition-colors group"
-                  >
-                    <div className="w-14 h-14 bg-white border border-secondary/30 rounded-lg overflow-hidden shrink-0 p-1">
-                      {item.image ? (
-                        <img
-                          src={item.image}
-                          alt={`${item.sourceLabel} 상품 이미지`}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-secondary/10" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="bg-emerald-500/10 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded font-bold truncate max-w-[140px]">
-                          {item.sourceLabel}
-                        </span>
-                        {item.availabilityHint && (
-                          <span className="text-[10px] text-muted-foreground">{item.availabilityHint}</span>
+              {sortedItems.map((item, i) => {
+                const soldOut = isSoldOutOffer(item);
+                const extraHint = extraAvailabilityHint(item.availabilityHint);
+                return (
+                  <li key={`${item.source}-${item.link}-${i}`}>
+                    <a
+                      href={item.link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-500/[0.04] transition-colors group ${
+                        soldOut ? "opacity-60" : ""
+                      }`}
+                    >
+                      <div className="w-14 h-14 bg-white border border-secondary/30 rounded-lg overflow-hidden shrink-0 p-1">
+                        {item.image ? (
+                          <img
+                            src={item.image}
+                            alt={`${item.sourceLabel} 상품 이미지`}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-secondary/10" />
                         )}
                       </div>
-                      <p className="text-[13px] font-medium text-foreground line-clamp-2 leading-snug">
-                        {item.title}
-                      </p>
-                    </div>
-                    <div className="shrink-0 text-right pl-2">
-                      <div className="text-base font-black text-emerald-600 tabular-nums">
-                        ₩{item.price.toLocaleString()}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="bg-emerald-500/10 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded font-bold truncate max-w-[140px]">
+                            {item.sourceLabel}
+                          </span>
+                          {soldOut && (
+                            <span className="text-[10px] font-bold text-muted-foreground border border-secondary/50 px-1.5 py-0.5 rounded">
+                              품절
+                            </span>
+                          )}
+                          {extraHint && (
+                            <span className="text-[10px] text-muted-foreground">{extraHint}</span>
+                          )}
+                        </div>
+                        <p className="text-[13px] font-medium text-foreground line-clamp-2 leading-snug">
+                          {item.title}
+                        </p>
                       </div>
-                      <ExternalLink
-                        size={12}
-                        className="inline-block mt-1 opacity-0 group-hover:opacity-50 text-muted-foreground"
-                      />
-                    </div>
-                  </a>
-                </li>
-              ))}
+                      <div className="shrink-0 text-right pl-2">
+                        <div
+                          className={`text-base font-black tabular-nums ${
+                            soldOut ? "text-muted-foreground" : "text-emerald-600"
+                          }`}
+                        >
+                          ₩{item.price.toLocaleString()}
+                        </div>
+                        <ExternalLink
+                          size={12}
+                          className="inline-block mt-1 opacity-0 group-hover:opacity-50 text-muted-foreground"
+                        />
+                      </div>
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

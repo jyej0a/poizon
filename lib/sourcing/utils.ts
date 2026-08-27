@@ -1,3 +1,4 @@
+import { isSoldOutOffer } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 
 export function normalizeArticleNumber(articleNumber: string): string {
@@ -141,11 +142,14 @@ export function extractJsonObjectsContainingKey<T>(html: string, key: string): T
 }
 
 /**
- * 동일 링크는 최저가로 합치고 가격 오름차순 상위 `limit`개를 만든다.
+ * 동일 링크는 최저가로 합치고 상위 `limit`개를 만든다.
+ *
+ * 살 수 있는 오퍼를 품절보다 앞에 둔다. 품절가가 더 싸도 원가 1등 자리를
+ * 차지하지 않게 하고, 상위 10개 자리도 살 수 있는 쪽으로 먼저 채운다.
  *
  * `perSourceLimit`은 한 몰이 목록을 독점하는 것을 막는다. 롯데ON은 한 품번에
  * 60건을 돌려주기 때문에 상한이 없으면 상위 10개가 전부 한 몰로 채워져
- * 품절 시 대안을 볼 수 없다. 몰별 상한을 채운 뒤 남는 자리는 가격순으로 메운다.
+ * 품절 시 대안을 볼 수 없다. 몰별 상한을 채운 뒤 남는 자리는 이어서 메운다.
  */
 export function dedupeAndSortOffers(
   offers: SourceOffer[],
@@ -162,12 +166,17 @@ export function dedupeAndSortOffers(
     }
   }
 
-  const sorted = [...byKey.values()].sort((a, b) => a.price - b.price);
+  const unique = [...byKey.values()];
+  const ranked = [
+    ...unique.filter((offer) => !isSoldOutOffer(offer)).sort((a, b) => a.price - b.price),
+    ...unique.filter((offer) => isSoldOutOffer(offer)).sort((a, b) => a.price - b.price),
+  ];
+
   const perSourceCount = new Map<string, number>();
   const picked: SourceOffer[] = [];
   const overflow: SourceOffer[] = [];
 
-  for (const offer of sorted) {
+  for (const offer of ranked) {
     const count = perSourceCount.get(offer.source) ?? 0;
     if (count < perSourceLimit) {
       perSourceCount.set(offer.source, count + 1);
@@ -177,5 +186,5 @@ export function dedupeAndSortOffers(
     }
   }
 
-  return [...picked, ...overflow].slice(0, limit).sort((a, b) => a.price - b.price);
+  return [...picked, ...overflow].slice(0, limit);
 }

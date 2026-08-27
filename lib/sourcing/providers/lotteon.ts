@@ -1,3 +1,4 @@
+import { offerAvailability } from "@/lib/sourcing/availability";
 import type { SourceOffer } from "@/types/source-offer";
 import {
   extractJsonObjectsContainingKey,
@@ -82,6 +83,7 @@ function createLotteOnProvider(options: {
           title: product.pdName,
           link,
           image: absolute(LOTTE_IMAGE_ORIGIN, product.pdImage),
+          availability: offerAvailability(product.soldOutYn === "Y"),
           availabilityHint: hints.length > 0 ? hints.join(" · ") : null,
           normalizedArticleNumber: normalized,
           fetchedAt,

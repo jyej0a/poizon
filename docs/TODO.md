@@ -43,6 +43,8 @@
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +11번가)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +GS샵·Hmall·더현대·CJ온스타일)
 - [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +LF몰·하이버)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 몰 커버리지 +브랜디·지그재그·유니클로)
+- [x] `docs/PRD.md` 및 `docs/TODO.md` 현행화 (2026-08-26, 원가 1등에서 품절 제외)
 
 ## 1. 프론트엔드 UI 레이아웃 및 디자인 (Completed)
 - [x] 전역 테마 및 스타일 파일 (`app/globals.css`) 설정
@@ -405,7 +407,7 @@
 > `여러 몰 종합 오퍼 상위 10개`로 전환한다.
 
 - [x] **S1** 오퍼 데이터 모델 정의 — 품번당 상위 10개 오퍼 (`types/source-offer.ts`)
-  - 필드: `source`, `sourceLabel`, `price`, `title`, `link`, `image`, `availabilityHint`, `normalizedArticleNumber`, `fetchedAt`
+  - 필드: `source`, `sourceLabel`, `price`, `title`, `link`, `image`, `availability`, `availabilityHint`, `normalizedArticleNumber`, `fetchedAt`
   - 같은 몰 중복 허용 (같은 몰이라도 다른 페이지/옵션/프로모션이면 별도 오퍼), 동일 링크만 dedupe
 - [x] **S2** 저장 구조 결정 — `search_job_items.payload.sourceOffers`에 포함
 - [x] **S3** 백그라운드 잡 단계 교체 — `naver` 단계를 `sourceOffers` 수집으로 교체
@@ -415,6 +417,8 @@
   - (+2026-08-26) **11번가**(`11st`) — 가격비교에 반복되는 오픈마켓. `apis.11st.co.kr/search/api/tab`
   - (+2026-08-26) **GS샵**(`gsshop`) · **현대Hmall**(`hmall`) · **더현대닷컴**(`thehyundai`) · **CJ온스타일**(`cjonstyle`)
     — 다나와 가격비교에 반복되는 홈쇼핑·백화점 플랫폼. 롯데홈쇼핑은 롯데아이몰(`lotteimall.com`)과 동일 사이트라 별도 파서 없음
+  - (+2026-08-26) **브랜디**(`brandi`) · **지그재그**(`zigzag`) · **유니클로**(`uniqlo`)
+    — 브랜디는 하이버와 같은 capi. 지그재그는 GraphQL 카탈로그(입점 셀러 사이트는 파싱하지 않음). 유니클로는 공식몰 품번 API
   - 롯데ON은 정규식 필드 조립 대신 `priceInfo` 포함 **상품 객체 단위** 파싱 (`extractJsonObjectsContainingKey`).
   - 롯데백화점몰은 ellotte.com이 롯데ON `mall_no=2`로 리다이렉트되므로 같은 파서에 몰 번호만 넣어 분리 수집
   - 롯데아이몰은 `searchMain.lotte?isTemplate=Y` JSON (`search_result_goods_info`)
@@ -434,22 +438,31 @@
   - 더현대닷컴(더현대Hi)은 `GET /proxy/v1/dp/search/searchResult` (`searchQuery` · `searchType=NCP_PRODUCT`)
   - CJ온스타일은 검색 HTML이 빈 셸이고 `search.cjonstyle.com/search-web/search/cjmall/item.json?k=`
   - 롯데홈쇼핑 도메인(`lottehomeshopping.com`)은 롯데아이몰로 연결되므로 `lotteimall` 파서가 담당
+  - 브랜디는 검색 HTML이 빈 SPA. `capi.brandi.co.kr/v1/web/search/products/{q}` + 하이버와 같은 게스트 토큰
+  - 지그재그는 Next 셸. GraphQL `GetSearchResult`(page_id=`srp_item`, q=품번). 입점 셀러 사이트는 파싱하지 않음
+  - 유니클로는 `GET /kr/api/commerce/v5/ko/products?q=`. 상품명에는 품번이 없고 `l1Id`에만 있으므로 제목에 붙인다
   - **품번 검증 필수** (`matchesArticleNumber`) — 몰 검색은 품번으로 질의해도 무관한 상품을 섞어 준다.
         실측: `CW2288-111` 60건 중 13건이 다른 상품이고 최저가(77,420원)가 전혀 다른 모델,
         `DD1391-100` 9건 중 8건이 5,070원대 잡화. 걸러내지 않으면 원가·마진이 그대로 어긋난다
   - 몰별 상한 5개 — 한 몰이 상위 10개를 독점해 품절 시 대안이 보이지 않는 것을 방지
-- [x] **S5** 입찰 계산 규칙 전환 — 마진 기본 원가 = 1등 오퍼 가격(`getBestSourceOfferPrice`), 모달에서 10개 전체 제공
+- [x] **S5** 입찰 계산 규칙 전환 — 마진 기본 원가 = 살 수 있는 오퍼의 최저가(`getBestSourceOfferPrice`), 모달에서 10개 전체 제공
+  - **2026-08-26** 품절로 확인된 오퍼는 원가 1등에서 제외. `availability`=`in_stock`/`sold_out`/`unknown`.
+        캐시된 payload는 `availabilityHint`의 `품절`·`재입고알림`으로 판정. 목록에는 남겨 배지 표시.
+        상위 10개 자리는 살 수 있는 오퍼를 먼저 채우고, 남는 자리에만 품절을 넣음. 품절만 있으면 원가 없음.
 - [x] **S6** 제약 명시
   - 네이버 경유 쿠폰/네이버페이 추가 할인까지 100% 재현하는 것은 범위 밖
   - 1차 목표는 **직접 구매 가능한 원가 상한선** 확보
 
 #### S4 남은 과제
 
-- [~] 몰 커버리지 확대 — **2026-08-26**: `lfmall`(GET `nxapi` multiSearch, CSRF 불필요) · `hiver`(capi `search/products`, 공개 guest Authorization) 추가.
+- [~] 몰 커버리지 확대 — **2026-08-26**: `brandi`(capi search/products, 하이버와 같은 게스트 토큰) ·
+      `zigzag`(GraphQL GetSearchResult, page_id=`srp_item`) · `uniqlo`(commerce v5 products, 공식몰 품번) 추가.
+      같은 날: `lfmall` · `hiver` · `gsshop` · `hmall` · `thehyundai` · `cjonstyle` · `11st` 추가.
       무신사는 S4부터 `musinsa`로 이미 연결. 품번 미판매는 `empty`.
       입점 셀러·스마트스토어는 가게마다 HTML/API가 달라 파서 대량 추가 대상이 아님 (PRD §5.7).
-      같은 날: `gsshop` · `hmall` · `thehyundai` · `cjonstyle` · `11st` 추가. 롯데홈쇼핑은 `lotteimall`과 동일.
       보류: 쿠팡·옥션·아디다스 KR(서버 fetch 403). 빈 `limited` 스텁은 넣지 않음.
+      이번 프로브에서 제외: AK몰·패션플러스·오케이몰(404/차단), 하프클럽(hapix 500),
+      NS홈쇼핑(SPA, mapi 경로 미확정), 갤러리아(빈 셸), 에이블리(403), 풋락커(Kasada), 인터파크(fetch 실패).
       네이버 카탈로그는 봇 418이라 같은 품번(`JWJGX25211`) 다나와 가격비교의 **플랫폼 몰**을 기준으로 함.
       2026-08-25: `29cm`(display-bff listing SRP) · `wconcept`(api-display 검색, 공개 DISPLAY-API-KEY) 추가.
       2026-08-24: `nike` · `elandmall` · `abcmart`로 스니커즈 공백을 줄임

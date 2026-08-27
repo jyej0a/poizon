@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>갤러리아몰 Premium life of yours | 시스템 장애 안내</title>
+<link rel="shortcut icon" href="https://cdn.galleria.co.kr/fo/images/common/favicon.ico" type="image/x-icon">
+<link href="https://fonts.googleapis.com/css?family=Noto+Sans+KR:400,500&display=swap&subset=korean" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css?family=Roboto+Condensed:400,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.galleria.co.kr/fo/css/common.css" type="text/css">
+<link rel="stylesheet" href="https://cdn.galleria.co.kr/fo/css/etc.css" type="text/css">
+<body>
+	<!-- WRAP -->
+	<div class="wrap etc">
+		<div class="etc_page">
+			<h1><img src="https://cdn.galleria.co.kr/fo/images/etc/ico_logo.png" alt="the galleria"></h1>
+			<div class="etc_exp etc_ico">
+				<dl>
+					<dt class="er500">&nbsp;</dt>
+					<dd>
+						서비스 이용에 불편을 드려 대단히 죄송합니다.<br>
+						감사합니다.
+					</dd>
+				</dl>
+			</div>
+			<div class="btns">
+				<span><a href="#none" class="gbtn bk pg" onClick="javascript:location.href='/'"><em>메인 화면</em></a></span>
+			</div>
+		</div>
+	</div>
+	<!-- //WRAP -->
+</body>
+</html>

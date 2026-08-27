@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <script type="module" crossorigin src="/assets/polyfills-kukGGA6f.js"></script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+    <meta name="naver-site-verification" content="bada80759d7a558e616b67c422dbab30b5a96e2c" />
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+    <title>NS홈쇼핑 - 건강한 아이디어</title>
+
+    <meta name="author" content="NS홈쇼핑" />
+    <meta name="description" content="TV에서 본 그 상품 5% 할인 및 구매시 3천원 적립까지! 신규가입 첫 구매 5천원 적립금과 매일 달라지는 특가 상품도 혜택 더드림!" />
+    <meta property="og:site_name" content="NS홈쇼핑- 건강한 아이디어" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="NS홈쇼핑- 건강한 아이디어" />
+    <meta property="og:description" content="TV에서 본 그 상품 5% 할인 및 구매시 3천원 적립까지! 신규가입 첫 구매 5천원 적립금과 매일 달라지는 특가 상품도 혜택 더드림!" />
+    <meta property="og:image" content="https://image.nsmall.com/ec_comimages/nsdesign/images/common/NS_mobile_bi.png" />
+
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon-precomposed.png">
+    <link rel="stylesheet" href="//asset.vodnsmall.com/fonts/pretendard/index.css" media="print" onload="this.media='all'" crossorigin />
+    <script>
+      // 글로벌 에러 핸들링
+      window.addEventListener('error', (event) => {
+        try {
+          const {filename, message} = event;
+          const parsed = new URL(filename)
+          // 외부 라이브러리 에러 예외 처리 및 로깅
+          if (parsed?.hostname && !parsed.hostname.endsWith("nsmall.com")) {
+            event.preventDefault();
+            return;
+          }
+          if (message) {
+            if (message.includes("ResizeObserver loop completed")) {
+              // ResizeObserver 에러 예외 처리 및 로깅
+              event.preventDefault();
+            } else if (message.includes("Unexpected token '{'. Expected ')'")) {
+              event.preventDefault();
+            }
+          }
+        } catch (e) {}
+      });
+
+      ((global) => {
+        if (global.location.hostname === 'www.nsmall.com') {
+          global.location.href = 'https://m.nsmall.com'
+        } else if (global.location.hostname === 'hoban.nsmall.com') {
+          global.location.href = 'https://m.nsmall.com/gate?ptnCd=50015&target=/store/atypical/1009574493'
+        } else if (global.location.hostname === 'www-stg.nsmall.com') {
+          global.location.href = 'https://nsm-stg-mfo.nsmall.com'
+        } else if (global.location.hostname === 'hoban-stg.nsmall.com') {
+          global.location.href = 'https://nsm-stg-mfo.nsmall.com/gate?ptnCd=50015&target=/store/atypical/1009574434'
+        } else if (global.location.hostname === 'www-dev.nsmall.com') {
+          global.location.href = 'https://nsm-dev-mfo.nsmall.com'
+        } else if (global.location.hostname === 'hoban-dev.nsmall.com') {
+          global.location.href = 'https://nsm-dev-mfo.nsmall.com/gate?ptnCd=50015&target=/store/atypical/1009574242'
+        }
+
+        const NAME = {
+          ID: {
+            DESKTOP: 'desktop',
+            MOBILE: 'mobile',
+          },
+          CLASS: {
+            IOS: 'app-ios',
+            NOTCH:'app-ios-notch',
+            AOS: 'app-aos'
+          }
+        }
+        const isDesktop = global.navigator.userAgent.match(/ipad|iphone|Android|NS_iOS|NS_ANDROID/i) === null;
+        const isAppIOS = global.navigator.userAgent.match(/NS_iOS/i) !== null
+        const isAppNotch = global.navigator.userAgent.match(/hasNotch/i) !== null
+        const isAppAOS = global.navigator.userAgent.match(/NS_ANDROID/i) !== null
+        const isIOS = global.navigator.userAgent.match(/ipad|iphone/i) !== null;
+
+        const setId = (idName) => {
+          global.document.addEventListener('DOMContentLoaded', () => { global.document.body.id = idName })
+        }
+        const setClass = (className) => {
+          global.document.addEventListener('DOMContentLoaded', () => { global.document.body.classList.add(className) })
+        }
+
+        // 테스트 코드
+        // html에 id 추가
+        if (isIOS) {
+          global.document.addEventListener('DOMContentLoaded', () => { global.document.documentElement.id = 'ios' })
+        }
+
+        if (isDesktop) { setId(NAME.ID.DESKTOP) }
+        else {
+          if (isAppIOS) { setClass(NAME.CLASS.IOS) }
+          if (isAppNotch) { setClass(NAME.CLASS.NOTCH) }
+          if (isAppAOS) { setClass(NAME.CLASS.AOS) }
+        }
+      })(window);
+    </script>
+    <script>
+      ((global) => {
+        const setVh = () => {
+          const vh = global.innerHeight * 0.01;
+          global.document.documentElement.style.setProperty('--vh', `${vh}px`)
+        };
+        setVh();
+
+        const useragt = global.navigator.userAgent.toLowerCase()
+        const isKakaotalk = useragt.match(/kakaotalk/i)
+        const isInstagram = useragt.match(/instagram/i)
+        const isIOS = useragt.match(/iphone|ipad|ipod/i)
+
+        // 카카오톡/인스타그램 인앱 브라우저에서 진입한 경우 외부브라우저로 이동.
+        if (isKakaotalk || (isInstagram && !isIOS)){
+          global.document.addEventListener('DOMContentLoaded', () => {
+            const target_url = location.href;
+            if (isKakaotalk) {
+              // 카카오톡 - 외부브라우저로 호출
+              global.location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(target_url)
+            } else {
+              // 인스타그램(Android) - 크롬 브라우저 호출
+              global.location.href='intent://' + target_url.replace(/https?:\/\//i, '') + '#Intent;scheme=http;package=com.android.chrome;end'
+            }
+
+            // 안내페이지 노출
+            fetch('/external-browser-info.html')
+              .then(res => res.text())
+              .then(body => {
+                document.body.innerHTML = body
+              })
+          })
+        }
+      })(window);
+
+      // 인스타그램 인앱브라우저에서 진입한 경우 외부브라우저로 이동.
+      // if (useragt.match(/instagram/i)){
+      //   if(useragt.match(/iphone|ipad|ipod/i)){
+      //     alert("당신은 아이폰이로 인스타그램 인앱브라우저에서 접근했습니다ㅡㅡ");
+      //     // 아이폰은 강제로 외부브라우저로 이동 불가능.
+      //     document.addEventListener('DOMContentLoaded',()=>{
+      //       document.body.innerHTML = "<button onclick='moveToExternalBrowser();'>NS몰 이용하기!!</button>";
+      //     });
+      //   }
+      //   else{
+      //     // 안드로이드는 Chrome 실행시킨다.
+      //     location.href='intent://'+target_url.replace(/https?:\/\//i,'')+'#Intent;scheme=http;package=com.android.chrome;end';
+      //   }
+      // }
+    </script>
+    <script type="module" crossorigin src="/assets/index-DQqlC40R.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/lottie-B8Xc47yG.js">
+    <link rel="modulepreload" crossorigin href="/assets/lodash-DM3dwptI.js">
+    <link rel="modulepreload" crossorigin href="/assets/gsap-C78MB6r_.js">
+    <link rel="modulepreload" crossorigin href="/assets/swiper-DkrhHWLz.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DGP5KI2y.css">
+  </head>
+  <body id="mobile">
+    <div id="app"></div>
+  </body>
+</html>

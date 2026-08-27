@@ -1,4 +1,4 @@
-import type { SourceOffer } from "@/types/source-offer";
+import { OFFER_AVAILABILITY, type SourceOffer } from "@/types/source-offer";
 import {
   decodeHtmlText,
   normalizeArticleNumber,
@@ -75,6 +75,7 @@ export const elandMallProvider: SourceOfferProvider = {
         title: brand && !title.includes(brand) ? `${brand} ${title}` : title,
         link,
         image,
+        availability: OFFER_AVAILABILITY.unknown,
         availabilityHint: brand,
         normalizedArticleNumber: normalized,
         fetchedAt,
