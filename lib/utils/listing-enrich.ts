@@ -39,16 +39,32 @@ function asArray(response: unknown): unknown[] {
   return [];
 }
 
+function uniquePositiveIds(...ids: number[]): number[] {
+  const set = new Set<number>();
+  for (const id of ids) {
+    if (Number.isFinite(id) && id > 0) set.add(id);
+  }
+  return [...set];
+}
+
+function catalogSkuIds(sku: Record<string, unknown>): number[] {
+  return uniquePositiveIds(
+    pickNumber(sku, ["skuId"]),
+    pickNumber(sku, ["dwSkuId"]),
+    pickNumber(sku, ["regionSkuId"])
+  );
+}
+
 function skuMatchesListing(listing: ParsedListingItem, sku: Record<string, unknown>): boolean {
-  const ids = [pickNumber(sku, ["skuId"]), pickNumber(sku, ["dwSkuId"]), pickNumber(sku, ["regionSkuId"])];
+  const ids = catalogSkuIds(sku);
   return ids.includes(listing.skuId) || (listing.globalSkuId > 0 && ids.includes(listing.globalSkuId));
 }
 
 async function fetchCatalogBySpuIds(
   client: PoizonClient,
   listings: ParsedListingItem[]
-): Promise<Map<string, { articleNumber: string; image: string }>> {
-  const catalog = new Map<string, { articleNumber: string; image: string }>();
+): Promise<Map<string, { articleNumber: string; image: string; skuIds: number[] }>> {
+  const catalog = new Map<string, { articleNumber: string; image: string; skuIds: number[] }>();
   const spuIds = [...new Set(listings.map((item) => item.spuId).filter((id) => id > 0))];
   if (spuIds.length === 0) return catalog;
 
@@ -87,6 +103,7 @@ async function fetchCatalogBySpuIds(
       catalog.set(listing.sellerBiddingNo, {
         articleNumber,
         image: pickString(sku, ["logoUrl", "image", "imgUrl"]) || spuImage,
+        skuIds: catalogSkuIds(sku),
       });
     }
   }
@@ -161,6 +178,7 @@ export async function enrichListingItems(
       ...item,
       articleNumber: extra?.articleNumber || item.articleNumber,
       image: extra?.image || item.image,
+      skuIdAliases: extra?.skuIds ?? item.skuIdAliases,
       cnMinPrice: rec?.cnMin,
       krMinPrice: rec?.krMin,
     };

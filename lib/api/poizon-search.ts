@@ -8,6 +8,7 @@
 import type { PoizonClient } from "@/lib/api/poizon";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
 import { withRetry } from "@/lib/api/retry";
+import { pickBestBrandMatch, type BrandNameRow } from "@/lib/search/brand-match";
 
 const ARTICLE_ENDPOINT =
   "/dop/api/v1/pop/api/v1/intl-commodity/intl/sku/sku-basic-info/by-article-number";
@@ -63,7 +64,7 @@ export async function fetchBrandSpus(
 
   // 이미 브랜드 ID를 알고 있으면 조회를 생략한다 (호출 절감)
   if (!brandId) {
-    const basePayload = { name: brandName, exactMatch: false, pageSize: 5, pageNum: 1 };
+    const basePayload = { name: brandName, exactMatch: false, pageSize: 20, pageNum: 1 };
 
     const [brandResKo, brandResEn] = await Promise.all([
       withRetry(
@@ -76,7 +77,7 @@ export async function fetchBrandSpus(
       ),
     ]);
 
-    const extractList = (res: any) =>
+    const extractList = (res: any): BrandNameRow[] =>
       Array.isArray(res?.data?.contents)
         ? res.data.contents
         : Array.isArray(res?.contents)
@@ -86,13 +87,9 @@ export async function fetchBrandSpus(
             : [];
 
     const mergedBrands = [...extractList(brandResKo), ...extractList(brandResEn)];
-
-    if (mergedBrands.length > 0) {
-      const bestMatch =
-        mergedBrands.find((b: any) => b.isShowLogo === 1) ||
-        mergedBrands.find((b: any) => b.isShow === 1) ||
-        mergedBrands[0];
-      brandId = bestMatch.brandId || bestMatch.id;
+    const bestMatch = pickBestBrandMatch(brandName, mergedBrands);
+    if (bestMatch) {
+      brandId = bestMatch.brandId || bestMatch.id || null;
     }
   }
 

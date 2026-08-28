@@ -10,8 +10,11 @@ import type {
   SearchJob,
   SearchJobItemRecord,
   SearchJobOptions,
+  SearchJobPurpose,
   SearchJobType,
 } from "@/types/search-job";
+import { DISCOVERY_DEFAULT_MIN_SALES_VOLUME, SEARCH_JOB_MAX_ITEMS } from "@/types/search-job";
+import { normalizeBulkArticles } from "@/lib/search/bulk-excel";
 
 export interface EnqueueSearchJobInput {
   type: SearchJobType;
@@ -44,12 +47,100 @@ export async function enqueueSearchJob(
   }
 }
 
+export interface EnqueueDiscoveryJobInput {
+  keyword: string;
+  minNetProfit: number;
+  minSalesVolume?: number;
+}
+
+/** 아이템 발굴 잡. 브랜드 스캔 + 적재 직전 수익 필터. */
+export async function enqueueDiscoveryJob(
+  input: EnqueueDiscoveryJobInput
+): Promise<{ success: boolean; data?: SearchJob; error?: string }> {
+  try {
+    const keyword = input.keyword.trim();
+    if (!keyword) return { success: false, error: "브랜드명을 입력해 주세요." };
+
+    const minNetProfit = Number(input.minNetProfit);
+    if (!Number.isFinite(minNetProfit) || minNetProfit < 0) {
+      return { success: false, error: "순수익 하한을 0원 이상으로 입력해 주세요." };
+    }
+
+    const minSalesVolume =
+      input.minSalesVolume == null
+        ? DISCOVERY_DEFAULT_MIN_SALES_VOLUME
+        : Number(input.minSalesVolume);
+    if (!Number.isFinite(minSalesVolume) || minSalesVolume < 0) {
+      return { success: false, error: "판매량 하한을 0 이상으로 입력해 주세요." };
+    }
+
+    const { supabase, userId } = await getCurrentUserId();
+    const job = await jobStore.createJob(supabase, userId, {
+      type: "brand",
+      keyword,
+      options: {
+        purpose: "discovery",
+        minNetProfit,
+        minSalesVolume,
+      },
+    });
+
+    return { success: true, data: job };
+  } catch (error: any) {
+    console.error("[enqueueDiscoveryJob] Error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export interface EnqueueBulkArticleJobInput {
+  articles: string[];
+  fileName?: string;
+}
+
+/** 실데이터 판매 엑셀에서 뽑은 품번을 백그라운드 품번 잡으로 등록한다. */
+export async function enqueueBulkArticleJob(
+  input: EnqueueBulkArticleJobInput
+): Promise<{ success: boolean; data?: SearchJob; error?: string }> {
+  try {
+    const { articles } = normalizeBulkArticles(input.articles ?? [], SEARCH_JOB_MAX_ITEMS);
+    if (articles.length === 0) {
+      return { success: false, error: "엑셀에서 품번을 찾지 못했습니다." };
+    }
+
+    const fileName = sanitizeBulkFileName(input.fileName);
+    const { supabase, userId } = await getCurrentUserId();
+    const job = await jobStore.createJob(supabase, userId, {
+      type: "article",
+      keyword: articles.join(","),
+      options: {
+        purpose: "bulk",
+        maxItems: articles.length,
+        sourceFileName: fileName,
+        articleCount: articles.length,
+      },
+    });
+
+    return { success: true, data: job };
+  } catch (error: any) {
+    console.error("[enqueueBulkArticleJob] Error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+function sanitizeBulkFileName(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const base = raw.replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+  if (!base) return undefined;
+  return base.slice(0, 120);
+}
+
 export async function getSearchJobs(
-  limit = 30
+  limit = 30,
+  purpose: SearchJobPurpose = "search"
 ): Promise<{ success: boolean; data: SearchJob[]; error?: string }> {
   try {
     const { supabase, userId } = await getCurrentUserId();
-    const jobs = await jobStore.listJobs(supabase, userId, limit);
+    const jobs = await jobStore.listJobs(supabase, userId, limit, purpose);
     return { success: true, data: jobs };
   } catch (error: any) {
     console.error("[getSearchJobs] Error:", error);

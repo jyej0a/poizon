@@ -83,6 +83,8 @@ export interface SearchBoardTableContextValue {
   handleToggleSkip: (itemOrSku: any, isSku?: boolean) => void;
   handleSaveSkuMemo: (skuId: string, spuId?: string) => void;
   handleBiddingPriceChange: (skuId: string, value: string) => void;
+  /** 타이핑 전용. 보드 전체를 다시 그리지 않고 ref만 갱신한다. */
+  handleBiddingPriceInput: (skuId: string, value: string) => void;
   handleSingleBid: (skuId: string | number, spuId: string | number) => void;
   openSourceOfferModal: (articleNumber: string) => void;
   setSkuMemoEditor: React.Dispatch<React.SetStateAction<SkuMemoEditorState | null>>;
@@ -91,11 +93,28 @@ export interface SearchBoardTableContextValue {
   toggleItemHandled: (item: any) => void;
   setManySelected: (skuIds: string[], value: boolean) => void;
   toggleRow: (id: string, skus?: any[]) => void;
-  removeItem: (index: number) => void;
-  openExclude: (item: { articleNumber: string; title: string; idx: number }) => void;
+  removeItem: (item: { id?: string | number; articleNumber?: string }) => void;
+  openExclude: (item: { articleNumber: string; title: string }) => void;
 }
 
 const SearchBoardTableContext = React.createContext<SearchBoardTableContextValue | null>(null);
+
+/** 핸들러 본문은 최신 ref를 읽고, 반환 객체 참조는 고정한다. */
+export function useStableCallbacks<T extends Record<string, (...args: never[]) => unknown>>(
+  callbacks: T
+): T {
+  const ref = React.useRef(callbacks);
+  ref.current = callbacks;
+  return React.useMemo(() => {
+    const stable = {} as T;
+    for (const key of Object.keys(callbacks) as Array<keyof T>) {
+      stable[key] = ((...args: never[]) => ref.current[key](...args)) as T[keyof T];
+    }
+    return stable;
+    // 키 구성은 마운트 시 고정. 본문은 매 렌더 ref에 갱신한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
 
 export function SearchBoardTableProvider({
   value,

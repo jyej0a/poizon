@@ -9,6 +9,7 @@ import type {
   SearchJobItemPayload,
   SearchJobItemRecord,
   SearchJobOptions,
+  SearchJobPurpose,
   SearchJobStatus,
   SearchJobType,
   SourceOfferItemStatus,
@@ -67,14 +68,25 @@ export async function createJob(
 export async function listJobs(
   supabase: SupabaseClient,
   userId: string,
-  limit = 30
+  limit = 30,
+  purpose: SearchJobPurpose = "search"
 ): Promise<SearchJob[]> {
-  const { data, error } = await supabase
+  let query = supabase
     .from("search_jobs")
     .select(JOB_SELECT)
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(limit);
+
+  if (purpose === "discovery") {
+    query = query.eq("options->>purpose", "discovery");
+  } else if (purpose === "bulk") {
+    query = query.eq("options->>purpose", "bulk");
+  } else {
+    query = query.or("options->>purpose.is.null,options->>purpose.eq.search");
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return (data ?? []).map(rowToJob);
@@ -422,6 +434,15 @@ export async function listJobItemsByKeyword(
   return items;
 }
 
+/** 재시도해도 결과가 달라지지 않는 잡 실패 (브랜드/품번 없음 등) */
+export function isDeterministicJobError(errorMessage: string): boolean {
+  return (
+    errorMessage.includes("고유 ID를 찾을 수 없습니다") ||
+    errorMessage.includes("검색된 상품이 없습니다") ||
+    errorMessage.includes("검색 결과가 없습니다")
+  );
+}
+
 /** 재시도 여력이 남았으면 큐로 되돌리고, 아니면 실패로 확정한다. */
 export async function requeueOrFail(
   supabase: SupabaseClient,
@@ -431,7 +452,7 @@ export async function requeueOrFail(
   const nextRetry = job.retryCount + 1;
   const now = new Date().toISOString();
 
-  if (nextRetry <= job.maxRetries) {
+  if (nextRetry <= job.maxRetries && !isDeterministicJobError(errorMessage)) {
     await supabase
       .from("search_jobs")
       .update({
@@ -504,12 +525,27 @@ export async function cancelJob(
   return (data?.length ?? 0) > 0;
 }
 
-/** 완료/실패한 잡을 다시 큐에 올린다 (결과는 초기화) */
+/** 완료/실패한 잡을 다시 큐에 올린다 (결과는 초기화). 잘못된 brandId 캐시도 버린다. */
 export async function retryJob(
   supabase: SupabaseClient,
   userId: string,
   jobId: string
 ): Promise<boolean> {
+  const { data: existing, error: loadError } = await supabase
+    .from("search_jobs")
+    .select("options")
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (loadError) throw loadError;
+  if (!existing) return false;
+
+  const options = { ...((existing.options as SearchJobOptions | null) ?? {}) };
+  delete options.brandId;
+  delete options.brandTotal;
+  options.brandPage = 1;
+  options.articleOffset = 0;
+
   const { error: deleteError } = await supabase
     .from("search_job_items")
     .delete()
@@ -520,6 +556,7 @@ export async function retryJob(
     .from("search_jobs")
     .update({
       status: "queued",
+      options,
       stage: null,
       progress_done: 0,
       progress_total: 0,

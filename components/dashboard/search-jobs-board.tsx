@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -22,8 +22,15 @@ import {
 } from "@/app/actions/search-jobs";
 import { SearchJobPushBanner } from "@/components/dashboard/search-job-push-banner";
 import { useSearchJobs } from "@/components/providers/search-jobs-provider";
+import { useSearchJobsQuery } from "@/hooks/use-search-jobs-query";
 import { formatDateTime } from "@/lib/utils/format-date";
-import { hasJobResults, isJobActive, JOB_STATUS_LABEL, type SearchJob } from "@/types/search-job";
+import {
+  hasJobResults,
+  isJobActive,
+  JOB_STATUS_LABEL,
+  type SearchJob,
+  type SearchJobPurpose,
+} from "@/types/search-job";
 
 const STATUS_STYLES: Record<SearchJob["status"], { badge: string; icon: React.ReactNode }> = {
   queued: {
@@ -92,10 +99,44 @@ function ProgressBar({ job }: { job: SearchJob }) {
   );
 }
 
-export function SearchJobsBoard() {
-  const { jobs, isLoading, error, refresh, markAllSeen, activeCount, runningCount, unclaimedCount } = useSearchJobs();
+export interface SearchJobsBoardProps {
+  purpose?: SearchJobPurpose;
+  resultBasePath?: string;
+  title?: string;
+  description?: string;
+  emptyTitle?: string;
+  emptyHint?: string;
+  showPushBanner?: boolean;
+  /** 값이 바뀌면 목록을 다시 불러온다 (발굴 등록 직후) */
+  refreshToken?: number;
+}
+
+export function SearchJobsBoard({
+  purpose = "search",
+  resultBasePath = "/dashboard/jobs",
+  title = "검색 작업",
+  description = "화면을 닫아도 워커가 손 안 댄 품번을 최대 500개까지 모읍니다. 결과 보기는 새 탭에서 열리며, 여러 작업을 동시에 두고 전환할 수 있습니다.",
+  emptyTitle = "등록된 검색 작업이 없습니다.",
+  emptyHint = "검색 화면에서 ‘백그라운드 검색’으로 등록하세요.",
+  showPushBanner = true,
+  refreshToken,
+}: SearchJobsBoardProps) {
+  const isDiscovery = purpose === "discovery";
+  const isBulk = purpose === "bulk";
+  const useSharedSearch = purpose === "search";
+  const searchJobs = useSearchJobs();
+  const queriedJobs = useSearchJobsQuery(purpose, !useSharedSearch);
+  const { jobs, isLoading, error, refresh, activeCount, runningCount, unclaimedCount } = useSharedSearch
+    ? searchJobs
+    : queriedJobs;
+  const markAllSeen = useSharedSearch ? searchJobs.markAllSeen : undefined;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (refreshToken == null) return;
+    void refresh();
+  }, [refreshToken, refresh]);
 
   const runAction = async (jobId: string, action: () => Promise<{ success: boolean; error?: string }>) => {
     setBusyId(jobId);
@@ -116,9 +157,9 @@ export function SearchJobsBoard() {
             <Inbox size={22} />
           </div>
           <div>
-            <h2 className="text-lg font-black tracking-tight text-foreground">검색 작업</h2>
+            <h2 className="text-lg font-black tracking-tight text-foreground">{title}</h2>
             <p className="text-sm text-muted-foreground">
-                화면을 닫아도 워커가 손 안 댄 품번을 최대 500개까지 모읍니다. 결과 보기는 새 탭에서 열리며, 여러 작업을 동시에 두고 전환할 수 있습니다.
+                {description}
             </p>
           </div>
         </div>
@@ -140,6 +181,7 @@ export function SearchJobsBoard() {
               {activeCount}건 대기
             </span>
           ) : null}
+          {markAllSeen ? (
           <button
             type="button"
             onClick={markAllSeen}
@@ -147,6 +189,7 @@ export function SearchJobsBoard() {
           >
             모두 확인 처리
           </button>
+          ) : null}
           <button
             type="button"
             onClick={() => void refresh()}
@@ -164,7 +207,7 @@ export function SearchJobsBoard() {
         </div>
       )}
 
-      <SearchJobPushBanner />
+      {showPushBanner ? <SearchJobPushBanner /> : null}
 
       {unclaimedCount > 0 && (
         <div className="bg-amber-500/8 border border-amber-500/25 text-amber-800 rounded-xl px-4 py-3 text-sm">
@@ -187,8 +230,8 @@ export function SearchJobsBoard() {
           <div className="flex-1 grid place-items-center py-24">
             <div className="flex flex-col items-center text-muted-foreground opacity-60">
               <Inbox className="w-10 h-10 mb-3 opacity-20" />
-              <p className="font-medium">등록된 검색 작업이 없습니다.</p>
-              <p className="text-xs mt-1">검색 화면에서 &lsquo;백그라운드 검색&rsquo;으로 등록하세요.</p>
+              <p className="font-medium">{emptyTitle}</p>
+              <p className="text-xs mt-1">{emptyHint}</p>
             </div>
           </div>
         ) : (
@@ -217,16 +260,39 @@ export function SearchJobsBoard() {
                           <div className="flex items-center gap-2">
                             <span
                               className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${
-                                job.type === "brand"
-                                  ? "bg-violet-500/10 text-violet-600"
-                                  : "bg-sky-500/10 text-sky-600"
+                                isDiscovery
+                                  ? "bg-primary/10 text-primary"
+                                  : isBulk
+                                    ? "bg-teal-500/10 text-teal-700"
+                                    : job.type === "brand"
+                                      ? "bg-violet-500/10 text-violet-600"
+                                      : "bg-sky-500/10 text-sky-600"
                               }`}
                             >
-                              {job.type === "brand" ? "브랜드" : "품번"}
+                              {isDiscovery ? "발굴" : isBulk ? "대량" : job.type === "brand" ? "브랜드" : "품번"}
                             </span>
-                            <span className="font-mono font-bold text-foreground line-clamp-1 max-w-[280px]">
-                              {job.keyword}
-                            </span>
+                            <div className="min-w-0">
+                              <span className="font-mono font-bold text-foreground line-clamp-1 max-w-[280px]">
+                                {isBulk
+                                  ? job.options.sourceFileName ||
+                                    `${job.options.articleCount ?? job.keyword.split(",").filter(Boolean).length}개 품번`
+                                  : job.keyword}
+                              </span>
+                              {isDiscovery && job.options.minNetProfit != null && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  순수익 ≥ ₩{Number(job.options.minNetProfit).toLocaleString("ko-KR")}
+                                  {job.options.minSalesVolume != null
+                                    ? ` · 판매 ≥ ${job.options.minSalesVolume}`
+                                    : ""}
+                                </p>
+                              )}
+                              {isBulk && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  {(job.options.articleCount ?? job.keyword.split(",").filter(Boolean).length).toLocaleString("ko-KR")}
+                                  개 품번
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </td>
 
@@ -268,7 +334,7 @@ export function SearchJobsBoard() {
                           <div className="flex items-center justify-end gap-1.5">
                             {hasJobResults(job) && (
                               <Link
-                                href={`/dashboard/jobs/${job.id}`}
+                                href={`${resultBasePath}/${job.id}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 title="새 탭에서 열기"
@@ -288,7 +354,13 @@ export function SearchJobsBoard() {
                                 }
                                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-40"
                                 title="취소"
-                                aria-label="검색 작업 취소"
+                                aria-label={
+                                  isDiscovery
+                                    ? "발굴 작업 취소"
+                                    : isBulk
+                                      ? "대량 조회 취소"
+                                      : "검색 작업 취소"
+                                }
                               >
                                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
                               </button>
@@ -301,7 +373,13 @@ export function SearchJobsBoard() {
                                 onClick={() => void runAction(job.id, () => retrySearchJob(job.id))}
                                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors disabled:opacity-40"
                                 title="다시 실행"
-                                aria-label="검색 작업 다시 실행"
+                                aria-label={
+                                  isDiscovery
+                                    ? "발굴 작업 다시 실행"
+                                    : isBulk
+                                      ? "대량 조회 다시 실행"
+                                      : "검색 작업 다시 실행"
+                                }
                               >
                                 {busy ? (
                                   <Loader2 size={14} className="animate-spin" />
@@ -315,12 +393,22 @@ export function SearchJobsBoard() {
                               type="button"
                               disabled={busy}
                               onClick={() => {
-                                if (!confirm("이 검색 작업과 모아 둔 상품 목록을 삭제할까요?\n검토·메모 기록은 남지만, 사진과 가격은 다시 불러올 수 없습니다.")) return;
+                                if (!confirm(isDiscovery
+                                  ? "이 발굴 작업과 모아 둔 상품 목록을 삭제할까요?\n검토·메모 기록은 남지만, 사진과 가격은 다시 불러올 수 없습니다."
+                                  : isBulk
+                                    ? "이 대량 조회와 모아 둔 상품 목록을 삭제할까요?\n검토·메모 기록은 남지만, 사진과 가격은 다시 불러올 수 없습니다."
+                                    : "이 검색 작업과 모아 둔 상품 목록을 삭제할까요?\n검토·메모 기록은 남지만, 사진과 가격은 다시 불러올 수 없습니다.")) return;
                                 void runAction(job.id, () => deleteSearchJob(job.id));
                               }}
                               className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-40"
                               title="삭제"
-                              aria-label="검색 작업 삭제"
+                                aria-label={
+                                  isDiscovery
+                                    ? "발굴 작업 삭제"
+                                    : isBulk
+                                      ? "대량 조회 삭제"
+                                      : "검색 작업 삭제"
+                                }
                             >
                               <Trash2 size={14} />
                             </button>
@@ -331,7 +419,13 @@ export function SearchJobsBoard() {
                                 onClick={() => setExpandedId(expanded ? null : job.id)}
                                 className="p-1.5 rounded-lg hover:bg-secondary text-amber-600 transition-colors"
                                 title="상세 사유"
-                                aria-label="검색 작업 상세 사유"
+                                aria-label={
+                                  isDiscovery
+                                    ? "발굴 작업 상세 사유"
+                                    : isBulk
+                                      ? "대량 조회 상세 사유"
+                                      : "검색 작업 상세 사유"
+                                }
                               >
                                 <AlertTriangle size={14} />
                               </button>

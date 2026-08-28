@@ -1,8 +1,8 @@
 /**
  * 백그라운드 검색 잡의 실제 수집 파이프라인 (서버 전용).
  *
- * 브랜드는 API 페이지 단위로 한 청크씩 처리한다. 워커가 페이지를 넘기며
- * 손 안 댄 품번을 최대 500개까지 적재한다.
+ * 브랜드는 API 페이지 단위, 품번은 20건씩 한 청크를 처리한다. 워커가
+ * 청크를 넘기며 손 안 댄 품번을 최대 500개까지 적재한다.
  *
  * 단계: 상품 조회 → 통계(KR/CN) → 아이템 변환 → 손댄 품번 제외 → 원가 오퍼·노출가
  */
@@ -16,6 +16,9 @@ import {
 } from "@/lib/api/poizon-search";
 import { mapWithConcurrency } from "@/lib/api/retry";
 import { fetchPricesForItems, type EnrichedSearchItem } from "@/lib/search/item-prices";
+import { stripTrailingHan } from "@/lib/search/bulk-excel";
+import { discoveryKeepCriteria, shouldKeepDiscoveryItem } from "@/lib/search/discovery-keep";
+import { loadSystemSettings } from "@/lib/search/system-settings";
 import {
   applyStatsToItemData,
   buildSearchItem,
@@ -27,8 +30,11 @@ import {
 import { filterItems, loadExclusionContext } from "@/lib/search/exclusion";
 import { getCachedSpuStats, setCachedSpuStats } from "@/lib/search/search-cache";
 import {
+  SEARCH_JOB_ARTICLE_CHUNK_SIZE,
   SEARCH_JOB_BRAND_PAGE_SIZE,
   SEARCH_JOB_MAX_ITEMS,
+  articleTermsFromKeyword,
+  jobPurpose,
   type SearchJobOptions,
   type SearchJobType,
 } from "@/types/search-job";
@@ -68,6 +74,8 @@ export interface SearchJobChunkOutcome {
   brandId: number | string | null;
   /** 다음에 칠 브랜드 페이지. 카탈로그가 끝났으면 현재 페이지 */
   nextBrandPage: number;
+  /** 품번 잡: 다음에 조회할 키워드 인덱스 */
+  nextArticleOffset: number;
   /** 더 가져올 페이지가 없음 (빈 페이지 또는 품번 검색 완료) */
   catalogEnded: boolean;
 }
@@ -176,8 +184,10 @@ export async function runSearchJobChunk(
   let brandTotal: number | null = options.brandTotal ?? null;
   let brandId: number | string | null = options.brandId ?? null;
   const pageNum = options.brandPage ?? 1;
-  let catalogEnded = spec.type === "article";
+  let catalogEnded = false;
   let nextBrandPage = pageNum;
+  let nextArticleOffset = options.articleOffset ?? 0;
+  let articleTermTotal = maxItems;
 
   await onProgress?.({
     stage: spec.type === "brand" ? `상품 조회 p.${pageNum}` : "상품 조회",
@@ -188,17 +198,34 @@ export async function runSearchJobChunk(
   const rawEntries: Array<{ data: any; term: string }> = [];
 
   if (spec.type === "article") {
-    const terms = spec.keyword
-      .split(",")
-      .map((k) => k.trim())
-      .filter((k) => k.length > 0)
-      .slice(0, maxItems);
+    const allTerms = articleTermsFromKeyword(spec.keyword, maxItems);
+    articleTermTotal = allTerms.length;
+    const offset = Math.min(nextArticleOffset, allTerms.length);
+    const terms = allTerms.slice(offset, offset + SEARCH_JOB_ARTICLE_CHUNK_SIZE);
+    nextArticleOffset = offset + terms.length;
+    catalogEnded = nextArticleOffset >= allTerms.length;
 
     await onProgress?.({
       stage: "상품 조회",
-      progressTotal: maxItems,
-      progressDone: alreadyKept,
+      progressTotal: articleTermTotal,
+      progressDone: offset,
     });
+
+    if (terms.length === 0) {
+      if (alreadyKept === 0) {
+        throw new Error("검색 결과가 없습니다. 품번을 확인해 주세요.");
+      }
+      return {
+        items: [],
+        excludedCount: 0,
+        warnings: warnings.summarize(),
+        brandTotal,
+        brandId,
+        nextBrandPage,
+        nextArticleOffset,
+        catalogEnded: true,
+      };
+    }
 
     let done = 0;
     const results = await mapWithConcurrency(terms, ARTICLE_CONCURRENCY, async (term) => {
@@ -213,7 +240,7 @@ export async function runSearchJobChunk(
         return { term, res: null };
       } finally {
         done += 1;
-        await onProgress?.({ progressDone: alreadyKept });
+        await onProgress?.({ progressDone: offset + done, progressTotal: articleTermTotal });
       }
     });
 
@@ -224,13 +251,41 @@ export async function runSearchJobChunk(
 
       if (itemData) {
         rawEntries.push({ data: itemData, term });
-      } else {
-        warnings.add("조회 결과 없음", term);
+        continue;
       }
+
+      const stripped = stripTrailingHan(term);
+      if (stripped && stripped !== term) {
+        try {
+          const retry = await fetchItemByArticleNumber(poizon, stripped, reporter);
+          let retryData = (retry as any)?.data ?? retry;
+          if (Array.isArray(retryData)) retryData = retryData[0];
+          if (retryData) {
+            rawEntries.push({ data: retryData, term: stripped });
+            continue;
+          }
+        } catch {
+          // 원문 없음과 같이 취급
+        }
+      }
+
+      warnings.add("조회 결과 없음", term);
     }
 
     if (rawEntries.length === 0) {
-      throw new Error("검색 결과가 없습니다. 품번을 확인해 주세요.");
+      if (alreadyKept === 0 && catalogEnded) {
+        throw new Error("검색 결과가 없습니다. 품번을 확인해 주세요.");
+      }
+      return {
+        items: [],
+        excludedCount: 0,
+        warnings: warnings.summarize(),
+        brandTotal,
+        brandId,
+        nextBrandPage,
+        nextArticleOffset,
+        catalogEnded,
+      };
     }
   } else {
     const pageSize = SEARCH_JOB_BRAND_PAGE_SIZE;
@@ -240,6 +295,11 @@ export async function runSearchJobChunk(
 
     const results = extractBrandResultsFromResponse(brandRes.data);
     if (results.length === 0) {
+      if (pageNum <= 1 && alreadyKept === 0) {
+        throw new Error(
+          `'${spec.keyword}' 브랜드로 검색된 상품이 없습니다. 명칭을 다시 확인해 주세요.`
+        );
+      }
       return {
         items: [],
         excludedCount: 0,
@@ -247,6 +307,7 @@ export async function runSearchJobChunk(
         brandTotal,
         brandId,
         nextBrandPage: pageNum,
+        nextArticleOffset,
         catalogEnded: true,
       };
     }
@@ -256,7 +317,9 @@ export async function runSearchJobChunk(
     catalogEnded = results.length < pageSize;
   }
 
-  await onProgress?.({ stage: "통계 수집", progressTotal: maxItems, progressDone: alreadyKept });
+  const progressTotal = spec.type === "article" ? articleTermTotal : maxItems;
+
+  await onProgress?.({ stage: "통계 수집", progressTotal, progressDone: alreadyKept });
   await applyStatistics(spec.id, supabase, poizon, rawEntries, warnings, reporter);
 
   const built: SearchItem[] = [];
@@ -284,16 +347,18 @@ export async function runSearchJobChunk(
       brandTotal,
       brandId,
       nextBrandPage,
+      nextArticleOffset,
       catalogEnded: catalogEnded || remaining <= 0,
     };
   }
 
-  const toEnrich = keptItems.slice(0, remaining);
+  const isDiscovery = jobPurpose(options) === "discovery";
+  const toEnrich = isDiscovery ? keptItems : keptItems.slice(0, remaining);
 
   await onProgress?.({
-    stage: "가격 수집",
-    progressTotal: maxItems,
-    progressDone: alreadyKept,
+    stage: isDiscovery ? "가격 수집·수익 필터" : "가격 수집",
+    progressTotal,
+    progressDone: spec.type === "article" ? nextArticleOffset : alreadyKept,
   });
 
   const enriched = await fetchPricesForItems(toEnrich, {
@@ -305,13 +370,47 @@ export async function runSearchJobChunk(
     },
   });
 
+  if (!isDiscovery) {
+    return {
+      items: enriched,
+      excludedCount,
+      warnings: warnings.summarize(),
+      brandTotal,
+      brandId,
+      nextBrandPage,
+      nextArticleOffset,
+      catalogEnded,
+    };
+  }
+
+  const criteria = discoveryKeepCriteria(options.minNetProfit, options.minSalesVolume);
+  if (!criteria) {
+    warnings.add("발굴 순수익 하한이 없어 이 페이지를 적재하지 않았습니다");
+    return {
+      items: [],
+      excludedCount: excludedCount + enriched.length,
+      warnings: warnings.summarize(),
+      brandTotal,
+      brandId,
+      nextBrandPage,
+      nextArticleOffset,
+      catalogEnded,
+    };
+  }
+
+  const settings = await loadSystemSettings(supabase);
+  const passed = enriched.filter((entry) => shouldKeepDiscoveryItem(entry, settings, criteria));
+  const dropped = enriched.length - passed.length;
+  const items = passed.slice(0, remaining);
+
   return {
-    items: enriched,
-    excludedCount,
+    items,
+    excludedCount: excludedCount + dropped + (passed.length - items.length),
     warnings: warnings.summarize(),
     brandTotal,
     brandId,
     nextBrandPage,
+    nextArticleOffset,
     catalogEnded,
   };
 }

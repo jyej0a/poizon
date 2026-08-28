@@ -21,7 +21,7 @@ import type { SourceOfferItemStatus } from "@/types/search-job";
 import type { SourceOffer, SourceOfferStatus } from "@/types/source-offer";
 
 const SOURCE_OFFER_CONCURRENCY = 3;
-const RECOMMEND_CONCURRENCY = 5;
+const RECOMMEND_CONCURRENCY = 2;
 
 export interface EnrichedSearchItem {
   item: SearchItem;

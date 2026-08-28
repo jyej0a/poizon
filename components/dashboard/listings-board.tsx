@@ -25,10 +25,13 @@ import {
   type ListingItem,
 } from "@/app/actions/listing";
 import { submitAutoFollow } from "@/app/actions/auto-follow";
+import { getSkuStatuses, getSkuStatusesBySpuIds, getStockMarkedSkuStatuses, setSkuStockMarked } from "@/app/actions/sku-status";
 import { FOLLOW_TYPES } from "@/types/auto-follow";
 import { formatWonAmount } from "@/lib/utils/exposure-price";
-import { computeAdjustedPrice } from "@/lib/utils/poizon-listing";
+import { computeAdjustedPrice, formatBidDate } from "@/lib/utils/poizon-listing";
 import { CopyableArticleNumber } from "@/components/dashboard/copyable-article-number";
+import { StockStatusIndicator } from "@/components/dashboard/stock-status-indicator";
+import { EMPTY_SKU_STATUS, type SkuStatus } from "@/types/sku-status";
 import {
   canEditListing,
   isLowestMissed,
@@ -81,6 +84,72 @@ function looksLikeBiddingNo(value: string): boolean {
   return /^\d{12,}$/.test(value.trim());
 }
 
+function uniquePositiveIds(...ids: Array<number | undefined | null>): number[] {
+  const set = new Set<number>();
+  for (const id of ids) {
+    if (id != null && Number.isFinite(id) && id > 0) set.add(id);
+  }
+  return [...set];
+}
+
+function skuStatusForIds(
+  statuses: Record<string, SkuStatus>,
+  ...ids: Array<number | undefined | null>
+): SkuStatus | undefined {
+  let fallback: SkuStatus | undefined;
+  for (const id of ids) {
+    if (id == null || !Number.isFinite(id) || id <= 0) continue;
+    const found = statuses[String(id)];
+    if (!found) continue;
+    if (found.stockMarked) return found;
+    if (!fallback) fallback = found;
+  }
+  return fallback;
+}
+
+function listingStatusIds(item: {
+  skuId?: number;
+  globalSkuId?: number;
+  skuIdAliases?: number[];
+}): Array<number | undefined | null> {
+  return [item.skuId, item.globalSkuId, ...(item.skuIdAliases ?? [])];
+}
+
+async function loadSkuStatusesForIds(skuIds: number[], spuIds: number[]) {
+  const [bySku, bySpu, marked] = await Promise.all([
+    skuIds.length > 0
+      ? getSkuStatuses(skuIds)
+      : Promise.resolve({ success: true as const, data: {} as Record<string, SkuStatus> }),
+    spuIds.length > 0
+      ? getSkuStatusesBySpuIds(spuIds)
+      : Promise.resolve({ success: true as const, data: {} as Record<string, SkuStatus> }),
+    getStockMarkedSkuStatuses(),
+  ]);
+  return { ...(bySpu.data ?? {}), ...(bySku.data ?? {}), ...(marked.data ?? {}) };
+}
+
+function withStockMark(prev: SkuStatus | undefined, marked: boolean, now: string): SkuStatus {
+  return {
+    ...(prev ?? EMPTY_SKU_STATUS),
+    stockMarked: marked,
+    stockMarkedDate: marked ? formatBidDate(now) : null,
+    stockMarkedAt: marked ? now : null,
+    updatedAt: now,
+  };
+}
+
+function patchSkuStatuses(
+  prev: Record<string, SkuStatus>,
+  ids: Array<number | undefined | null>,
+  next: SkuStatus
+): Record<string, SkuStatus> {
+  const out = { ...prev };
+  for (const id of uniquePositiveIds(...ids)) {
+    out[String(id)] = next;
+  }
+  return out;
+}
+
 export function ListingsBoard() {
   const [listings, setListings] = useState<ListingItem[]>([]);
   const [localHistory, setLocalHistory] = useState<BidHistoryItem[]>([]);
@@ -103,6 +172,8 @@ export function ListingsBoard() {
   const [dataSource, setDataSource] = useState<"api" | "local">("api");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [followItem, setFollowItem] = useState<ListingItem | null>(null);
+  const [skuStatuses, setSkuStatuses] = useState<Record<string, SkuStatus>>({});
+  const [savingStockIds, setSavingStockIds] = useState<Set<string>>(new Set());
 
   const tradeStatus = LISTING_STATUS_TABS.find((tab) => tab.key === statusTab)?.tradeStatus ?? 2;
 
@@ -128,6 +199,11 @@ export function ListingsBoard() {
           setListings(result.data);
           setLastOffsetId(result.lastOffsetId);
           setHasMore(result.hasMore);
+          const skuIds = uniquePositiveIds(
+            ...result.data.flatMap((item) => listingStatusIds(item))
+          );
+          const spuIds = uniquePositiveIds(...result.data.flatMap((item) => [item.spuId, item.globalSpuId]));
+          setSkuStatuses(await loadSkuStatusesForIds(skuIds, spuIds));
         } else {
           setApiError(result.error || "입찰 목록을 불러오지 못했습니다.");
           const localResult = await getLocalBidHistory(localPage, pageSize);
@@ -135,6 +211,8 @@ export function ListingsBoard() {
             setLocalHistory(localResult.data as BidHistoryItem[]);
             setLocalTotal(localResult.total);
             setDataSource("local");
+            const skuIds = uniquePositiveIds(...(localResult.data as BidHistoryItem[]).map((item) => item.sku_id));
+            setSkuStatuses(await loadSkuStatusesForIds(skuIds, []));
           }
         }
       } else {
@@ -142,6 +220,8 @@ export function ListingsBoard() {
         if (localResult.success) {
           setLocalHistory(localResult.data as BidHistoryItem[]);
           setLocalTotal(localResult.total);
+          const skuIds = uniquePositiveIds(...(localResult.data as BidHistoryItem[]).map((item) => item.sku_id));
+          setSkuStatuses(await loadSkuStatusesForIds(skuIds, []));
         }
       }
     } catch (err: unknown) {
@@ -158,14 +238,52 @@ export function ListingsBoard() {
   const visibleListings = useMemo(() => {
     const q = appliedKeyword.trim().toLowerCase();
     return listings.filter((item) => {
-      if (!matchesListingViewFilter(item, viewFilter)) return false;
+      const skuStatus = skuStatusForIds(skuStatuses, ...listingStatusIds(item));
+      if (!matchesListingViewFilter(item, viewFilter, { stockMarked: !!skuStatus?.stockMarked })) return false;
       if (!q || looksLikeBiddingNo(q)) return true;
       return [item.productName, item.articleNumber, item.sizeInfo, item.sellerBiddingNo, String(item.skuId)]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
-  }, [appliedKeyword, listings, viewFilter]);
+  }, [appliedKeyword, listings, skuStatuses, viewFilter]);
+
+  const handleToggleStock = async (
+    ids: Array<number | undefined | null>,
+    skuId: number,
+    spuId?: number | null
+  ) => {
+    const saveKey = String(skuId);
+    if (!skuId || savingStockIds.has(saveKey)) return;
+    const current = !!skuStatusForIds(skuStatuses, ...ids, skuId)?.stockMarked;
+    const next = !current;
+    const now = new Date().toISOString();
+    const snapshot = skuStatuses;
+    const patched = withStockMark(skuStatusForIds(skuStatuses, ...ids, skuId), next, now);
+    const writeIds = uniquePositiveIds(
+      skuId,
+      ...ids.filter((id) => id != null && skuStatuses[String(id)])
+    );
+
+    setSkuStatuses((prev) => patchSkuStatuses(prev, [...ids, skuId], patched));
+    setSavingStockIds((prev) => new Set(prev).add(saveKey));
+    try {
+      const results = await Promise.all(
+        writeIds.map((id) => setSkuStockMarked(id, next, spuId ?? undefined))
+      );
+      if (results.some((res) => !res.success)) {
+        setSkuStatuses(snapshot);
+        const failed = results.find((res) => !res.success);
+        alert(`재고 보유 표기 실패: ${failed?.error ?? "sku_status 테이블을 확인하세요."}`);
+      }
+    } finally {
+      setSavingStockIds((prev) => {
+        const n = new Set(prev);
+        n.delete(saveKey);
+        return n;
+      });
+    }
+  };
 
   const handleCancel = async (sellerBiddingNo: string, skipConfirm = false) => {
     if (!skipConfirm && !confirm("이 입찰을 취소하시겠습니까?")) return;
@@ -235,7 +353,7 @@ export function ListingsBoard() {
     if (dataSource === "api") {
       downloadCsv(
         `listings-${statusTab}.csv`,
-        ["입찰번호", "품번", "상품", "사이즈", "SKU", "가격", "수량", "상태", "중국노출", "한국노출", "중국최저", "한국최저"],
+        ["입찰번호", "품번", "상품", "사이즈", "SKU", "가격", "수량", "상태", "중국노출", "한국노출", "중국최저", "한국최저", "재고보유"],
         visibleListings.map((item) => [
           item.sellerBiddingNo,
           item.articleNumber,
@@ -249,13 +367,14 @@ export function ListingsBoard() {
           item.krExposed ? "노출" : "미노출",
           item.cnMinPrice ?? "",
           item.krMinPrice ?? "",
+          skuStatusForIds(skuStatuses, ...listingStatusIds(item))?.stockMarked ? "Y" : "",
         ])
       );
       return;
     }
     downloadCsv(
       "listings-local.csv",
-      ["입찰번호", "상품", "사이즈", "SKU", "가격", "상태"],
+      ["입찰번호", "상품", "사이즈", "SKU", "가격", "상태", "재고보유"],
       localHistory.map((item) => [
         item.seller_bidding_no,
         item.product_name,
@@ -263,6 +382,7 @@ export function ListingsBoard() {
         item.sku_id,
         item.bid_price,
         item.status,
+        skuStatusForIds(skuStatuses, item.sku_id)?.stockMarked ? "Y" : "",
       ])
     );
   };
@@ -339,7 +459,7 @@ export function ListingsBoard() {
               </button>
             ))}
             <span className="w-px h-4 bg-secondary/50 mx-1" />
-            {LISTING_VIEW_FILTERS.map((tab) => (
+            {LISTING_VIEW_FILTERS.filter((tab) => tab.key !== "stock").map((tab) => (
               <button
                 key={tab.key}
                 type="button"
@@ -348,6 +468,21 @@ export function ListingsBoard() {
                   viewFilter === tab.key
                     ? "bg-secondary text-foreground border-secondary"
                     : "bg-secondary/10 text-muted-foreground border-secondary/20 hover:bg-secondary/30"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <span className="w-px h-4 bg-secondary/50 mx-1" />
+            {LISTING_VIEW_FILTERS.filter((tab) => tab.key === "stock").map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setViewFilter(tab.key)}
+                className={`px-3 py-1.5 text-[12px] font-medium rounded-md whitespace-nowrap border ${
+                  viewFilter === tab.key
+                    ? "bg-emerald-600 text-white border-emerald-600"
+                    : "bg-emerald-500/10 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/20"
                 }`}
               >
                 {tab.label}
@@ -442,6 +577,7 @@ export function ListingsBoard() {
                 <th className="px-2 w-10 text-center border-r border-secondary/10">
                   <input type="checkbox" className="w-3.5 h-3.5" onChange={toggleSelectAll} checked={allSelected} />
                 </th>
+                <th className="px-2 min-w-[72px] text-center border-r border-secondary/10">재고</th>
                 <th className="px-4 min-w-[280px] border-r border-secondary/10">상품</th>
                 <th className="px-2 min-w-[60px] text-center border-r border-secondary/10">수량</th>
                 <th className="px-2 min-w-[110px] text-center border-r border-secondary/10">입찰가</th>
@@ -454,7 +590,7 @@ export function ListingsBoard() {
             <tbody className="divide-y divide-secondary/10">
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-20">
+                  <td colSpan={9} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
                       <Loader2 size={28} className="animate-spin opacity-30" />
                       <span className="text-[13px] font-medium opacity-40">데이터를 불러오는 중...</span>
@@ -463,7 +599,7 @@ export function ListingsBoard() {
                 </tr>
               ) : dataSource === "api" && visibleListings.length === 0 && !apiError ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-20">
+                  <td colSpan={9} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
                       <Package size={36} className="opacity-10" />
                       <span className="text-[13px] font-medium opacity-30">이 조건의 입찰이 없습니다</span>
@@ -472,7 +608,7 @@ export function ListingsBoard() {
                 </tr>
               ) : dataSource === "local" && localHistory.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-20">
+                  <td colSpan={9} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
                       <Package size={36} className="opacity-10" />
                       <span className="text-[13px] font-medium opacity-30">로컬 입찰 이력이 없습니다</span>
@@ -484,6 +620,7 @@ export function ListingsBoard() {
                   <ListingRow
                     key={item.sellerBiddingNo}
                     item={item}
+                    skuStatus={skuStatusForIds(skuStatuses, ...listingStatusIds(item))}
                     isSelected={selectedIds.has(item.sellerBiddingNo)}
                     onSelect={() => {
                       setSelectedIds((prev) => {
@@ -504,6 +641,10 @@ export function ListingsBoard() {
                     }
                     onCancelBid={() => void handleCancel(item.sellerBiddingNo)}
                     onAutoFollow={() => setFollowItem(item)}
+                    onToggleStock={() =>
+                      void handleToggleStock(listingStatusIds(item), item.skuId, item.spuId)
+                    }
+                    isSavingStock={savingStockIds.has(String(item.skuId))}
                     isCancelling={cancellingIds.has(item.sellerBiddingNo)}
                     isUpdating={updatingIds.has(item.sellerBiddingNo)}
                   />
@@ -513,6 +654,7 @@ export function ListingsBoard() {
                   <LocalHistoryRow
                     key={item.id}
                     item={item}
+                    skuStatus={skuStatusForIds(skuStatuses, item.sku_id)}
                     isSelected={selectedIds.has(item.seller_bidding_no || item.id)}
                     onSelect={() => {
                       const id = item.seller_bidding_no || item.id;
@@ -523,6 +665,8 @@ export function ListingsBoard() {
                       });
                     }}
                     onCancelBid={() => item.seller_bidding_no && void handleCancel(item.seller_bidding_no)}
+                    onToggleStock={() => void handleToggleStock([item.sku_id], item.sku_id)}
+                    isSavingStock={savingStockIds.has(String(item.sku_id))}
                     isCancelling={cancellingIds.has(item.seller_bidding_no || "")}
                   />
                 ))
@@ -636,8 +780,46 @@ function MarketCell({
   );
 }
 
+function ListingStockCell({
+  skuStatus,
+  onToggle,
+  isSaving,
+}: {
+  skuStatus?: SkuStatus;
+  onToggle: () => void;
+  isSaving: boolean;
+}) {
+  const stockMarked = !!skuStatus?.stockMarked;
+  const stockDate = skuStatus?.stockMarkedDate ?? "—";
+  return (
+    <td className="px-2 text-center border-r border-secondary/10">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={isSaving}
+        title={stockMarked ? `재고 보유 표기 · ${stockDate} · 클릭하여 해제` : "재고 보유로 표기"}
+        className={`inline-flex flex-col items-center justify-center gap-0.5 min-w-[52px] py-0.5 rounded-md disabled:opacity-40 ${
+          stockMarked ? "hover:bg-emerald-500/10" : "hover:bg-secondary"
+        }`}
+      >
+        {isSaving ? (
+          <Loader2 size={12} className="animate-spin text-muted-foreground" />
+        ) : stockMarked ? (
+          <>
+            <StockStatusIndicator date={stockDate} variant="badge" />
+            <span className="text-[9px] text-emerald-700 font-semibold">{stockDate}</span>
+          </>
+        ) : (
+          <span className="text-[10px] text-muted-foreground/55 font-medium">미보유</span>
+        )}
+      </button>
+    </td>
+  );
+}
+
 function ListingRow({
   item,
+  skuStatus,
   isSelected,
   onSelect,
   editingPrice,
@@ -646,10 +828,13 @@ function ListingRow({
   onCancelEdit,
   onCancelBid,
   onAutoFollow,
+  onToggleStock,
+  isSavingStock,
   isCancelling,
   isUpdating,
 }: {
   item: ListingItem;
+  skuStatus?: SkuStatus;
   isSelected: boolean;
   onSelect: () => void;
   editingPrice?: string;
@@ -658,18 +843,26 @@ function ListingRow({
   onCancelEdit: () => void;
   onCancelBid: () => void;
   onAutoFollow: () => void;
+  onToggleStock: () => void;
+  isSavingStock: boolean;
   isCancelling: boolean;
   isUpdating: boolean;
 }) {
   const isEditing = editingPrice !== undefined;
   const statusInfo = listingStatusMeta(item.tradeStatus);
   const editable = canEditListing(item.tradeStatus);
+  const stockMarked = !!skuStatus?.stockMarked;
 
   return (
-    <tr className="hover:bg-secondary/5 transition-colors h-16">
-      <td className="px-2 text-center border-r border-secondary/10">
+    <tr className={`hover:bg-secondary/5 transition-colors h-16 ${stockMarked ? "bg-emerald-500/[0.08]" : ""}`}>
+      <td
+        className={`px-2 text-center border-r border-secondary/10 ${
+          stockMarked ? "border-l-[3px] border-l-solid border-l-emerald-500" : ""
+        }`}
+      >
         <input type="checkbox" checked={isSelected} onChange={onSelect} className="w-3.5 h-3.5" />
       </td>
+      <ListingStockCell skuStatus={skuStatus} onToggle={onToggleStock} isSaving={isSavingStock} />
       <td className="px-4 border-r border-secondary/10">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-lg bg-white border border-secondary/20 p-1 shrink-0 overflow-hidden">
@@ -768,27 +961,39 @@ function ListingRow({
 
 function LocalHistoryRow({
   item,
+  skuStatus,
   isSelected,
   onSelect,
   onCancelBid,
+  onToggleStock,
+  isSavingStock,
   isCancelling,
 }: {
   item: BidHistoryItem;
+  skuStatus?: SkuStatus;
   isSelected: boolean;
   onSelect: () => void;
   onCancelBid: () => void;
+  onToggleStock: () => void;
+  isSavingStock: boolean;
   isCancelling: boolean;
 }) {
   const statusInfo = LOCAL_STATUS_LABEL[item.status] || LOCAL_STATUS_LABEL.active;
   const createdDate = item.created_at
     ? new Date(item.created_at).toLocaleDateString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : "—";
+  const stockMarked = !!skuStatus?.stockMarked;
 
   return (
-    <tr className="hover:bg-secondary/5 transition-colors h-14">
-      <td className="px-2 text-center border-r border-secondary/10">
+    <tr className={`hover:bg-secondary/5 transition-colors h-14 ${stockMarked ? "bg-emerald-500/[0.08]" : ""}`}>
+      <td
+        className={`px-2 text-center border-r border-secondary/10 ${
+          stockMarked ? "border-l-[3px] border-l-solid border-l-emerald-500" : ""
+        }`}
+      >
         <input type="checkbox" checked={isSelected} onChange={onSelect} className="w-3.5 h-3.5" />
       </td>
+      <ListingStockCell skuStatus={skuStatus} onToggle={onToggleStock} isSaving={isSavingStock} />
       <td className="px-4 border-r border-secondary/10">
         <div className="flex flex-col min-w-0 leading-tight">
           <span className="font-bold text-[12px] text-foreground/70 truncate">{item.product_name || "—"}</span>

@@ -12,6 +12,7 @@ import { toStoredSearchItem } from "@/lib/search/search-item";
 import * as jobStore from "@/lib/search/job-store";
 import {
   SEARCH_JOB_MAX_ITEMS,
+  articleTermsFromKeyword,
   type SearchJob,
   type SearchJobOptions,
 } from "@/types/search-job";
@@ -92,10 +93,15 @@ async function notifyJobPush(
       userId,
       buildSearchJobPushPayload({
         id: job.id,
-        keyword: job.keyword,
+        keyword:
+          job.options?.purpose === "bulk"
+            ? job.options.sourceFileName ||
+              `${job.options.articleCount ?? job.itemCount}개 품번`
+            : job.keyword,
         itemCount: job.itemCount,
         status,
         error,
+        purpose: job.options?.purpose,
       })
     );
     if (result.sent > 0) {
@@ -182,11 +188,12 @@ async function processOneChunk(
       brandPage: outcome.nextBrandPage,
       brandId: outcome.brandId,
       brandTotal: outcome.brandTotal,
+      articleOffset: outcome.nextArticleOffset,
       maxItems,
     };
 
     const reachedCap = itemCount >= maxItems;
-    const finished = outcome.catalogEnded || reachedCap || job.type === "article";
+    const finished = outcome.catalogEnded || reachedCap;
 
     await jobStore.checkpointJob(supabase, job.id, {
       options: nextOptions,
@@ -194,8 +201,9 @@ async function processOneChunk(
       excludedCount,
       warnings,
       stage: finished ? null : `수집 ${itemCount}/${maxItems}`,
-      progressTotal: maxItems,
-      progressDone: itemCount,
+      progressTotal:
+        job.type === "article" ? articleTermsFromKeyword(job.keyword, maxItems).length : maxItems,
+      progressDone: job.type === "article" ? outcome.nextArticleOffset : itemCount,
     });
 
     const nextJob: SearchJob = {

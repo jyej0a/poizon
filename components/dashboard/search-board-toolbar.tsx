@@ -27,6 +27,13 @@ import {
   type WorkspaceView,
 } from "./dashboard-view-tabs";
 import { CONTROL_PRESS } from "@/lib/utils/motion";
+
+function formatJobKeyword(searchType: "article" | "brand", keyword: string): string {
+  if (searchType === "brand") return `브랜드 ${keyword}`;
+  const parts = keyword.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 4) return `${parts.length}개 품번`;
+  return `품번 ${keyword}`;
+}
 import {
   clearSearchHistory,
   removeSearchHistory,
@@ -90,6 +97,8 @@ export interface SearchBoardToolbarProps {
   onResetColumnWidths: () => void;
   canClearList: boolean;
   onClearList: () => void;
+  jobsListHref?: string;
+  jobResultLabel?: string;
 }
 
 export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
@@ -144,6 +153,8 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
     onResetColumnWidths,
     canClearList,
     onClearList,
+    jobsListHref = "/dashboard/jobs",
+    jobResultLabel = "검색 작업 결과",
   } = props;
 
   return (
@@ -159,18 +170,18 @@ export function SearchBoardToolbar(props: SearchBoardToolbarProps) {
         {variant === "job" ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Link
-              href="/dashboard/jobs"
+              href={jobsListHref}
               className={`${toolbarBtnOutline} shrink-0`}
             >
               <ChevronLeft size={13} />
               목록으로
             </Link>
             <p className="min-w-0 truncate text-xs text-foreground">
-              <span className="font-semibold">검색 작업 결과</span>
+              <span className="font-semibold">{jobResultLabel}</span>
               {jobKeyword ? (
                 <span className="text-muted-foreground">
                   {" "}
-                  · {searchType === "brand" ? "브랜드" : "품번"} {jobKeyword}
+                  · {formatJobKeyword(searchType, jobKeyword)}
                 </span>
               ) : null}
             </p>

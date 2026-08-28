@@ -2,6 +2,7 @@
 
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SEARCH_BOARD_INDEX_COL_PX } from "@/lib/search/board-page";
 import type { SortKey } from "@/lib/search/column-layout";
 import type { WorkspaceView } from "./dashboard-view-tabs";
 
@@ -118,12 +119,19 @@ export function SearchBoardTableHeader({
     <thead className="text-[11px] text-muted-foreground bg-muted sticky top-0 z-20 border-b border-border uppercase font-semibold tracking-wide">
       <tr className="h-10 align-middle">
         <th
+          style={{ width: SEARCH_BOARD_INDEX_COL_PX }}
+          className={`${thBase} px-0`}
+          aria-label="품번 번호"
+        >
+          <span aria-hidden>#</span>
+        </th>
+        <th
           style={{ width: `${columnWidths.manage}px` }}
           className={`${thBase}`}
         >
           <div className="flex items-center justify-center gap-2">
             <Checkbox
-              aria-label="현재 목록의 모든 옵션 선택"
+              aria-label="현재 페이지의 모든 옵션 선택"
               size="sm"
               checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
               onCheckedChange={onToggleSelectAll}

@@ -8,7 +8,7 @@ import {
   getSearchJobDetail,
 } from "@/app/actions/search-jobs";
 import { getExcludedArticles } from "@/app/actions/excluded-articles";
-import { useSearchJobs } from "@/components/providers/search-jobs-provider";
+import { useSearchJobsRefresh } from "@/components/providers/search-jobs-provider";
 import {
   applyStatsToItemData,
   brandItemKey,
@@ -57,7 +57,7 @@ export interface UsePoizonSearchOptions {
  */
 export function usePoizonSearch(options: UsePoizonSearchOptions) {
   const variant = options.variant ?? "live";
-  const { refresh: refreshJobs } = useSearchJobs();
+  const refreshJobs = useSearchJobsRefresh();
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const searchRunIdRef = useRef(0);
@@ -152,9 +152,9 @@ export function usePoizonSearch(options: UsePoizonSearchOptions) {
           return;
         }
 
-        setItems(res.items.map((row) => row.payload));
-        optionsRef.current.mergeJobSourceOffers(res.items);
         optionsRef.current.mergeJobRecommendations(res.items);
+        optionsRef.current.mergeJobSourceOffers(res.items);
+        setItems(res.items.map((row) => row.payload));
         setSearchType(res.job.type);
         setLastBrandKeyword(res.job.keyword);
         setTotalCount(res.job.options.brandTotal ?? res.items.length);

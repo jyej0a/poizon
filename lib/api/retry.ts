@@ -31,6 +31,9 @@ const NON_RETRYABLE_PATTERNS = [
   "permission",
   "not found",
   "same listing already exists",
+  // 호출 빈도 제한은 즉시 재시도하면 한도만 더 채운다. 입찰 제출이 노출가 큐에 밀림.
+  "400010007",
+  "频次超限",
 ];
 
 const RETRYABLE_PATTERNS = [
@@ -50,13 +53,10 @@ const RETRYABLE_PATTERNS = [
   "503",
   "504",
   "gateway",
-  // 호출 빈도 제한 — 백오프 후 재시도하면 대개 성공한다.
-  // POIZON은 중국어로 응답하므로(`400010007: 调用频次超限`) 영문 패턴만으로는 잡히지 않는다.
+  // 네이버 등 영문 429. POIZON `400010007`/`频次超限`은 NON_RETRYABLE.
   "too many requests",
   "429",
   "rate limit",
-  "频次超限",
-  "400010007",
   // 게이트웨이 혼잡. HTTP 404로 오지만 본문이 "前方拥挤了，请稍安勿躁。"
   "前方拥挤",
   "稍安勿躁",

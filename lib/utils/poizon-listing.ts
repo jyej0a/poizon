@@ -99,6 +99,7 @@ export function parseListingItem(raw: unknown): ParsedListingItem {
     spuId: pickNumber(item, ["spuId"]),
     globalSkuId: pickNumber(item, ["globalSkuId"]),
     globalSpuId: pickNumber(item, ["globalSpuId"]),
+    skuIdAliases: [],
     productName: pickString(item, ["spuTitle", "productName", "title", "spuName"]),
     articleNumber: pickString(item, ["articleNumber", "goodsNo", "styleId"]),
     image: pickString(item, ["image", "logoUrl", "imgUrl", "skuLogo"]),
@@ -226,4 +227,45 @@ export async function fetchActiveListingsBySkuIdsSafe(
     console.warn("[fetchActiveListingsBySkuIds] fallback to local:", msg.slice(0, 200));
     return new Map();
   }
+}
+
+/**
+ * 입찰번호로 실데이터 1건을 찾는다. 상태 탭이 달라 안 보이는 경우를 막기 위해
+ * 활성 → 거래중 → 취소 순으로 본다.
+ */
+export async function fetchListingByBiddingNo(
+  client: PoizonClient,
+  sellerBiddingNo: string
+): Promise<ParsedListingItem | null> {
+  const biddingNo = sellerBiddingNo.trim();
+  if (!biddingNo) return null;
+
+  const statuses = [
+    TRADE_STATUS.ACTIVE,
+    TRADE_STATUS.IN_TRANSACTION,
+    TRADE_STATUS.CANCELLED,
+  ] as const;
+
+  let lastError: unknown;
+  for (const tradeStatus of statuses) {
+    try {
+      const response = await client.request<unknown>(
+        POIZON_CONSTANTS.ENDPOINTS.LISTING_LIST,
+        listingListPayload({
+          tradeStatus,
+          sellerBiddingNo: biddingNo,
+          pageSize: 20,
+        })
+      );
+      const match = extractListingRawList(response)
+        .map(parseListingItem)
+        .find((item) => item.sellerBiddingNo === biddingNo);
+      if (match) return match;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return null;
 }

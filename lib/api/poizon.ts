@@ -1,6 +1,15 @@
 import crypto from "crypto";
 import { withRetry } from "@/lib/api/retry";
 
+const RATE_LIMIT_COOLDOWN_MS = 5_000;
+let poizonRateLimitedUntil = 0;
+
+function isPoizonRateLimitMessage(code: unknown, msg: string): boolean {
+  return String(code) === "400010007" || msg.includes("频次超限");
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface PoizonConfig {
   appKey: string;
   appSecret: string;
@@ -89,6 +98,8 @@ export class PoizonClient {
    */
   public async request<T = any>(endpoint: string, businessParams: Record<string, any> = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const cooldown = poizonRateLimitedUntil - Date.now();
+    if (cooldown > 0) await sleep(Math.min(cooldown, 8_000));
 
     return withRetry(
       async () => {
@@ -123,6 +134,9 @@ export class PoizonClient {
         const businessCode = json.code ?? json.status ?? json.status_code;
         if (businessCode !== undefined && businessCode !== 200 && businessCode !== 0) {
           const errorMsg = json.msg || json.message || json.error_msg || "Unknown API Error";
+          if (isPoizonRateLimitMessage(businessCode, String(errorMsg))) {
+            poizonRateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+          }
           throw new Error(`Poizon API Error (${businessCode}): ${errorMsg}`);
         }
 

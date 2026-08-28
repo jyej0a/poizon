@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { getSearchJobs } from "@/app/actions/search-jobs";
+import { searchJobsUnchanged } from "@/lib/search/job-list";
 import { isJobActive, isQueuedUnclaimed, type SearchJob } from "@/types/search-job";
 
 /**
@@ -23,7 +24,7 @@ import { isJobActive, isQueuedUnclaimed, type SearchJob } from "@/types/search-j
 const ACTIVE_POLL_MS = 3_000;
 const IDLE_POLL_MS = 30_000;
 
-interface SearchJobsContextValue {
+interface SearchJobsStateValue {
   jobs: SearchJob[];
   activeCount: number;
   runningCount: number;
@@ -32,12 +33,18 @@ interface SearchJobsContextValue {
   unseenCount: number;
   isLoading: boolean;
   error: string | null;
+}
+
+interface SearchJobsApiValue {
   refresh: () => Promise<void>;
   markSeen: (jobId: string) => void;
   markAllSeen: () => void;
 }
 
-const SearchJobsContext = createContext<SearchJobsContextValue | null>(null);
+export type SearchJobsContextValue = SearchJobsStateValue & SearchJobsApiValue;
+
+const SearchJobsStateContext = createContext<SearchJobsStateValue | null>(null);
+const SearchJobsApiContext = createContext<SearchJobsApiValue | null>(null);
 
 const SEEN_STORAGE_KEY = "poizon_seen_search_jobs";
 
@@ -65,8 +72,10 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+  const [queueClock, setQueueClock] = useState(0);
 
   const inFlightRef = useRef(false);
+  const jobsRef = useRef<SearchJob[]>([]);
 
   useEffect(() => {
     setSeenIds(readSeen());
@@ -77,15 +86,18 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
     inFlightRef.current = true;
 
     try {
-      const res = await getSearchJobs();
+      const res = await getSearchJobs(30, "search");
       if (res.success) {
-        setJobs(res.data);
+        if (!searchJobsUnchanged(jobsRef.current, res.data)) {
+          jobsRef.current = res.data;
+          setJobs(res.data);
+        }
         setError(null);
       } else {
         setError(res.error ?? "잡 목록을 불러오지 못했습니다.");
       }
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       inFlightRef.current = false;
       setIsLoading(false);
@@ -96,7 +108,7 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
   const runningCount = useMemo(() => jobs.filter((j) => j.status === "running").length, [jobs]);
   const unclaimedCount = useMemo(
     () => jobs.filter((j) => isQueuedUnclaimed(j)).length,
-    [jobs]
+    [jobs, queueClock]
   );
 
   // 진행 중 잡이 있을 때만 짧은 주기로 폴링한다
@@ -106,6 +118,13 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
     const timer = setInterval(() => void refresh(), interval);
     return () => clearInterval(timer);
   }, [refresh, activeCount]);
+
+  // queued 경과(45초)로 미기동 배지가 바뀌도록, 데이터 변경이 없어도 시계만 갱신
+  useEffect(() => {
+    if (!jobs.some((j) => j.status === "queued")) return;
+    const timer = setInterval(() => setQueueClock((n) => n + 1), ACTIVE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [jobs]);
 
   // 탭으로 돌아왔을 때 즉시 최신화
   useEffect(() => {
@@ -127,11 +146,11 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
 
   const markAllSeen = useCallback(() => {
     setSeenIds(() => {
-      const next = new Set(jobs.map((j) => j.id));
+      const next = new Set(jobsRef.current.map((j) => j.id));
       persistSeen(next);
       return next;
     });
-  }, [jobs]);
+  }, []);
 
   const unseenCount = useMemo(
     () =>
@@ -141,7 +160,7 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
     [jobs, seenIds]
   );
 
-  const value = useMemo<SearchJobsContextValue>(
+  const stateValue = useMemo<SearchJobsStateValue>(
     () => ({
       jobs,
       activeCount,
@@ -150,20 +169,40 @@ export function SearchJobsProvider({ children }: { children: React.ReactNode }) 
       unseenCount,
       isLoading,
       error,
+    }),
+    [jobs, activeCount, runningCount, unclaimedCount, unseenCount, isLoading, error]
+  );
+
+  const apiValue = useMemo<SearchJobsApiValue>(
+    () => ({
       refresh,
       markSeen,
       markAllSeen,
     }),
-    [jobs, activeCount, runningCount, unclaimedCount, unseenCount, isLoading, error, refresh, markSeen, markAllSeen]
+    [refresh, markSeen, markAllSeen]
   );
 
-  return <SearchJobsContext.Provider value={value}>{children}</SearchJobsContext.Provider>;
+  return (
+    <SearchJobsApiContext.Provider value={apiValue}>
+      <SearchJobsStateContext.Provider value={stateValue}>{children}</SearchJobsStateContext.Provider>
+    </SearchJobsApiContext.Provider>
+  );
 }
 
 export function useSearchJobs(): SearchJobsContextValue {
-  const ctx = useContext(SearchJobsContext);
-  if (!ctx) {
+  const state = useContext(SearchJobsStateContext);
+  const api = useContext(SearchJobsApiContext);
+  if (!state || !api) {
     throw new Error("useSearchJobs는 SearchJobsProvider 내부에서만 사용할 수 있습니다.");
   }
-  return ctx;
+  return { ...state, ...api };
+}
+
+/** 잡 목록 변경에 리렌더되지 않는다. 등록 직후 갱신 등 명령만 필요할 때 쓴다. */
+export function useSearchJobsRefresh(): () => Promise<void> {
+  const api = useContext(SearchJobsApiContext);
+  if (!api) {
+    throw new Error("useSearchJobsRefresh는 SearchJobsProvider 내부에서만 사용할 수 있습니다.");
+  }
+  return api.refresh;
 }

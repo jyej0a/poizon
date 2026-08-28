@@ -1,6 +1,7 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { loadSystemSettings } from "@/lib/search/system-settings";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
 import { DEFAULT_SYSTEM_SETTINGS } from "@/lib/utils/calculate-margin";
 
@@ -104,21 +105,7 @@ export async function getPoizonSettings() {
 export async function getSystemSettings() {
   try {
     const supabase = getServiceRoleClient();
-    const { data, error } = await supabase
-      .from("system_settings")
-      .select("fee_percentage, min_fee, max_fee, target_margin_rate")
-      .single();
-
-    if (error) throw error;
-    return {
-      success: true,
-      data: {
-        fee_percentage: Number(data.fee_percentage),
-        min_fee: Number(data.min_fee),
-        max_fee: Number(data.max_fee),
-        target_margin_rate: Number(data.target_margin_rate ?? DEFAULT_SYSTEM_SETTINGS.target_margin_rate),
-      },
-    };
+    return { success: true, data: await loadSystemSettings(supabase) };
   } catch (error) {
     console.error("[getSystemSettings] Error:", error);
     return { success: true, data: { ...DEFAULT_SYSTEM_SETTINGS } };

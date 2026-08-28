@@ -11,6 +11,7 @@ export interface SearchSkuDetail {
   skuId?: number | string;
   dwSkuId?: number | string;
   regionSkuId?: number | string;
+  globalSkuId?: number | string;
   image?: string | null;
   logoUrl?: string | null;
   commoditySales?: { globalSoldNum30?: number; localSoldNum30?: number } | null;
@@ -67,6 +68,41 @@ export function resolveSkuId(
   const id = sku.skuId ?? sku.dwSkuId ?? sku.regionSkuId;
   if (id == null || id === "") return "";
   return String(id);
+}
+
+function positiveId(...candidates: unknown[]): number | undefined {
+  for (const value of candidates) {
+    const id = Number(value);
+    if (Number.isFinite(id) && id > 0) return id;
+  }
+  return undefined;
+}
+
+/**
+ * 화면 키와 submit-bid ID를 나눈다.
+ * 오픈 API `skuId`는 DW, `globalSkuId`는 상품 SKU. 보드 키(`resolveSkuId`)는 이력을 맞추기 위해 유지.
+ */
+export function resolveBidIdentity(
+  sku:
+    | {
+        skuId?: number | string;
+        dwSkuId?: number | string;
+        regionSkuId?: number | string;
+        globalSkuId?: number | string;
+      }
+    | null
+    | undefined
+): { boardSkuId: string; apiSkuId: number; globalSkuId?: number } | null {
+  const boardSkuId = resolveSkuId(sku);
+  if (!boardSkuId) return null;
+  const apiSkuId = positiveId(sku?.dwSkuId, boardSkuId);
+  if (!apiSkuId) return null;
+  const globalSkuId = positiveId(sku?.globalSkuId, sku?.skuId, sku?.regionSkuId, boardSkuId);
+  return {
+    boardSkuId,
+    apiSkuId,
+    ...(globalSkuId && globalSkuId !== apiSkuId ? { globalSkuId } : {}),
+  };
 }
 
 export function getChildSkuIds(item: { skuDetails?: SearchSkuDetail[] } | null | undefined): string[] {

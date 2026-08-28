@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { CheckCircle2, ChevronRight, CircleDot, EyeOff, ImageIcon } from "lucide-react";
 import { getChildSkuIds } from "@/lib/search/search-item";
 import { skuListPrice } from "@/lib/search/sku-display";
@@ -11,6 +12,7 @@ import { ICON_PRESS } from "@/lib/utils/motion";
 import { isHighProfit } from "@/lib/utils/high-profit";
 import { getBestSourceOffer, getBestSourceOfferPrice } from "@/lib/sourcing/source-offer-view";
 import { CopyableArticleNumber } from "./copyable-article-number";
+import { SearchBoardIndexCell } from "./search-board-index-cell";
 import { ProfitStack } from "./profit-stack";
 import { RowMemoPopover } from "./row-memo-popover";
 import { SearchBoardSkuRow } from "./search-board-sku-row";
@@ -23,10 +25,10 @@ import { useSearchBoardTable } from "./search-board-table-context";
 
 interface SearchBoardSpuRowProps {
   item: any;
-  idx: number;
+  articleIndex: number;
 }
 
-export function SearchBoardSpuRow({ item, idx }: SearchBoardSpuRowProps) {
+export const SearchBoardSpuRow = memo(function SearchBoardSpuRow({ item, articleIndex }: SearchBoardSpuRowProps) {
   const ctx = useSearchBoardTable();
   const isBiddable = item.raw?.userCanBidding !== false;
   const isExpanded = !!ctx.expandedRows[item.id];
@@ -84,7 +86,8 @@ export function SearchBoardSpuRow({ item, idx }: SearchBoardSpuRowProps) {
           if (item.skuDetails?.length > 0) ctx.toggleRow(item.id, item.skuDetails);
         }}
       >
-        <td className={cn(cell, spuVisual.accentClass, "relative")} onClick={(e) => e.stopPropagation()}>
+        <SearchBoardIndexCell index={articleIndex} className={cell} accentClass={spuVisual.accentClass} />
+        <td className={cn(cell, "relative")} onClick={(e) => e.stopPropagation()}>
           <SpuRowManageCell
             allChildSelected={allChildSelected}
             someChildSelected={someChildSelected}
@@ -105,9 +108,9 @@ export function SearchBoardSpuRow({ item, idx }: SearchBoardSpuRowProps) {
               void ctx.handleToggleSkip(item, false);
             }}
             onExclude={() =>
-              ctx.openExclude({ articleNumber: item.articleNumber, title: item.title, idx })
+              ctx.openExclude({ articleNumber: item.articleNumber, title: item.title })
             }
-            onRemove={() => ctx.removeItem(idx)}
+            onRemove={() => ctx.removeItem(item)}
           />
           {ctx.memoEditor?.spuId === spuKey && (
             <RowMemoPopover
@@ -274,4 +277,4 @@ export function SearchBoardSpuRow({ item, idx }: SearchBoardSpuRowProps) {
         ))}
     </>
   );
-}
+});

@@ -3,7 +3,6 @@
  */
 
 import type { PoizonClient } from "@/lib/api/poizon";
-import { withRetry } from "@/lib/api/retry";
 import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
 import type { RecommendBidPriceData } from "@/types/recommend-bid-price";
 
@@ -34,23 +33,17 @@ export function compactRecommendPrice(data: unknown): RecommendBidPriceData {
 export async function fetchSkuRecommendPrice(
   client: PoizonClient,
   skuId: string | number,
-  reporter?: RecommendRetryReporter
+  _reporter?: RecommendRetryReporter
 ): Promise<RecommendBidPriceData | null> {
-  const response = await withRetry(
-    () =>
-      client.request<{ code?: number; data?: unknown; msg?: string }>(
-        POIZON_CONSTANTS.ENDPOINTS.RECOMMEND_PRICE,
-        {
-          skuId: Number(skuId),
-          biddingType: POIZON_CONSTANTS.BIDDING.DEFAULT_BIDDING_TYPE,
-          saleType: POIZON_CONSTANTS.BIDDING.DEFAULT_SALE_TYPE,
-          region: "KR",
-          currency: "KRW",
-        }
-      ),
+  // client.request가 이미 재시도한다. 여기서 한 번 더 감싸면 빈도 제한이 9회까지 반복된다.
+  const response = await client.request<{ code?: number; data?: unknown; msg?: string }>(
+    POIZON_CONSTANTS.ENDPOINTS.RECOMMEND_PRICE,
     {
-      onRetry: (error, attempt, delayMs) =>
-        reporter?.onRetry?.(`추천가 ${skuId}`, error, attempt, delayMs),
+      skuId: Number(skuId),
+      biddingType: POIZON_CONSTANTS.BIDDING.DEFAULT_BIDDING_TYPE,
+      saleType: POIZON_CONSTANTS.BIDDING.DEFAULT_SALE_TYPE,
+      region: "KR",
+      currency: "KRW",
     }
   );
 

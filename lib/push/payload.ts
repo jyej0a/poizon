@@ -1,4 +1,5 @@
 import type { SearchJobPushPayload, SearchJobPushStatus, WebPushPayload } from "@/types/push";
+import { jobListPath, jobPurpose, type SearchJobPurpose } from "@/types/search-job";
 
 function truncate(text: string, max = 80): string {
   const trimmed = text.trim();
@@ -12,14 +13,17 @@ export function buildSearchJobPushPayload(job: {
   itemCount: number;
   status: SearchJobPushStatus;
   error?: string | null;
+  purpose?: SearchJobPurpose;
 }): SearchJobPushPayload {
+  const purpose = jobPurpose({ purpose: job.purpose });
   const titles: Record<SearchJobPushStatus, string> = {
-    done: "검색 완료",
-    partial: "검색 부분 완료",
-    failed: "검색 실패",
+    done: purpose === "discovery" ? "발굴 완료" : purpose === "bulk" ? "대량 조회 완료" : "검색 완료",
+    partial: purpose === "discovery" ? "발굴 부분 완료" : purpose === "bulk" ? "대량 조회 부분 완료" : "검색 부분 완료",
+    failed: purpose === "discovery" ? "발굴 실패" : purpose === "bulk" ? "대량 조회 실패" : "검색 실패",
   };
 
-  const url = job.itemCount > 0 ? `/dashboard/jobs/${job.id}` : "/dashboard/jobs";
+  const listPath = jobListPath(purpose);
+  const url = job.itemCount > 0 ? `${listPath}/${job.id}` : listPath;
   const body =
     job.status === "failed"
       ? `${job.keyword} · ${truncate(job.error || "수집에 실패했습니다.")}`

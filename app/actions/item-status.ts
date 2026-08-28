@@ -1,7 +1,6 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
-import { getServiceRoleClient } from "@/lib/supabase/service-role";
+import { getCurrentUserId } from "@/lib/auth/current-user";
 
 export interface ItemStatus {
   handled: boolean;
@@ -10,18 +9,8 @@ export interface ItemStatus {
 }
 
 async function getUserId() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("로그인이 필요합니다.");
-
-  const supabase = getServiceRoleClient();
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("id")
-    .eq("clerk_id", userId)
-    .single();
-
-  if (error || !user) throw new Error("사용자를 찾을 수 없습니다.");
-  return { supabase, userInternalId: user.id as string };
+  const { supabase, userId } = await getCurrentUserId();
+  return { supabase, userInternalId: userId };
 }
 
 /**

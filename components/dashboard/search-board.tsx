@@ -9,7 +9,16 @@ import { getSkuSalesValue } from "@/lib/utils/sales-volume";
 import {
   getChildSkuIds,
   resolveSkuId,
+  resolveBidIdentity,
+  brandItemKey,
 } from "@/lib/search/search-item";
+import {
+  articleIndexMap,
+  clampPage,
+  pageCount,
+  SEARCH_BOARD_PAGE_SIZE,
+  uniqueKeysInOrder,
+} from "@/lib/search/board-page";
 import {
   COLUMN_STORAGE_KEY,
   DEFAULT_COLUMN_WIDTHS,
@@ -52,9 +61,11 @@ import { type BidDisplaySource, type BidStatusInfo } from "./bid-status-indicato
 import { type ReviewCheckState } from "./review-check-button";
 import { type DisplayFilter, type WorkspaceView } from "./dashboard-view-tabs";
 import { SearchBoardToolbar, toolbarBtn } from "./search-board-toolbar";
+import { SearchBoardPagination } from "./search-board-pagination";
 import { SearchBoardResultsTable } from "./search-board-results-table";
 import {
   SearchBoardTableProvider,
+  useStableCallbacks,
   type SearchBoardTableContextValue,
 } from "./search-board-table-context";
 import { SourceOfferResultsDialog } from "./source-offer-results-dialog";
@@ -62,14 +73,23 @@ import { SourceOfferResultsDialog } from "./source-offer-results-dialog";
 export function SearchBoard({
   variant = "live",
   jobId = null,
+  jobsListHref = "/dashboard/jobs",
+  jobResultLabel = "검색 작업 결과",
+  initialView = "hierarchy",
+  initialSort = null,
 }: {
   variant?: SearchBoardVariant;
   jobId?: string | null;
+  jobsListHref?: string;
+  jobResultLabel?: string;
+  initialView?: WorkspaceView;
+  initialSort?: { key: SortKey; dir: "asc" | "desc" } | null;
 }) {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   
   // 입찰가 액션용 State
   const [biddingPrices, setBiddingPrices] = useState<Record<string, string>>({});
+  const biddingPricesRef = React.useRef<Record<string, string>>({});
   const [selectedSkus, setSelectedSkus] = useState<Record<string, boolean>>({});
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
 
@@ -81,7 +101,7 @@ export function SearchBoard({
 
   // 품번 제외용 State
   const [isExcludeModalOpen, setIsExcludeModalOpen] = useState(false);
-  const [itemToExclude, setItemToExclude] = useState<{ articleNumber: string, title: string, idx: number } | null>(null);
+  const [itemToExclude, setItemToExclude] = useState<{ articleNumber: string, title: string } | null>(null);
   const [excludeReason, setExcludeReason] = useState("");
   const [isExcluding, setIsExcluding] = useState(false);
 
@@ -89,7 +109,11 @@ export function SearchBoard({
   const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>({ ...DEFAULT_COLUMN_WIDTHS });
 
   // 정렬 상태 (숫자형 컬럼 클릭 정렬)
-  const [sortConfig, setSortConfig] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(
+    initialSort
+  );
+  const [resultPage, setResultPage] = useState(1);
+  const tableScrollRef = React.useRef<HTMLDivElement>(null);
 
   // 비차단 인라인 피드백 (alert 대체)
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -128,7 +152,7 @@ export function SearchBoard({
   const [resizing, setResizing] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [bidHistoryBySku, setBidHistoryBySku] = useState<Record<string, BidStatusInfo>>({});
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("hierarchy");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>(initialView);
   const [watchFocus, setWatchFocus] = useState(false);
   const [displayFilter, setDisplayFilter] = useState<DisplayFilter>("all");
   const [selectedCategory, setSelectedCategory] = useState("전체");
@@ -148,6 +172,8 @@ export function SearchBoard({
     queueRecommendationFetch,
     cancelRecommendations,
     hydrateRecommendations,
+    pauseRecommendationQueue,
+    resumeRecommendationQueue,
   } = useSkuRecommendationQueue();
 
   const {
@@ -291,19 +317,30 @@ export function SearchBoard({
     const startX = e.pageX;
     const startWidth = columnWidths[column];
     let finalWidths = columnWidths;
+    let latestWidth = startWidth;
+    let raf = 0;
     
     const minWidth = column === "manage" ? 150 : 60;
     const handleMouseMove = (updateEvent: MouseEvent) => {
-      const newWidth = Math.max(minWidth, startWidth + (updateEvent.pageX - startX));
-      setColumnWidths(prev => {
-        finalWidths = { ...prev, [column]: newWidth };
-        return finalWidths;
+      latestWidth = Math.max(minWidth, startWidth + (updateEvent.pageX - startX));
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setColumnWidths((prev) => {
+          finalWidths = { ...prev, [column]: latestWidth };
+          return finalWidths;
+        });
       });
     };
     
     const handleMouseUp = () => {
+      if (raf) cancelAnimationFrame(raf);
+      setColumnWidths((prev) => {
+        finalWidths = { ...prev, [column]: latestWidth };
+        return finalWidths;
+      });
       setResizing(null);
-      persistWidths(finalWidths); // 드래그 종료 시 자동 저장
+      persistWidths(finalWidths);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -485,7 +522,7 @@ export function SearchBoard({
 
   React.useEffect(() => {
     setBiddingPrices((prev) => {
-      const next = { ...prev };
+      const next = { ...prev, ...biddingPricesRef.current };
       let changed = false;
 
       items.forEach((item) => {
@@ -509,7 +546,9 @@ export function SearchBoard({
         });
       });
 
-      return changed ? next : prev;
+      if (!changed) return prev;
+      biddingPricesRef.current = next;
+      return next;
     });
   }, [skuRecommendations, items]);
 
@@ -641,7 +680,13 @@ export function SearchBoard({
 
   const handleBiddingPriceChange = (skuId: string, value: string) => {
     const numStr = value.replace(/[^0-9]/g, "");
-    setBiddingPrices(prev => ({ ...prev, [skuId]: numStr }));
+    biddingPricesRef.current = { ...biddingPricesRef.current, [skuId]: numStr };
+    setBiddingPrices((prev) => (prev[skuId] === numStr ? prev : { ...prev, [skuId]: numStr }));
+  };
+
+  const handleBiddingPriceInput = (skuId: string, value: string) => {
+    const numStr = value.replace(/[^0-9]/g, "");
+    biddingPricesRef.current = { ...biddingPricesRef.current, [skuId]: numStr };
   };
 
   // Flat 뷰(옵션 / 수익 옵션)용 행 계산
@@ -813,6 +858,40 @@ export function SearchBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredFlattenedRows, sortConfig, sourceOffers, systemSettings, skuRecommendations]);
 
+  const articleKeys = React.useMemo(
+    () =>
+      isFlatView
+        ? uniqueKeysInOrder(sortedFlattenedRows.map((row) => brandItemKey(row.parent)))
+        : sortedItems.map((item) => brandItemKey(item)),
+    [isFlatView, sortedFlattenedRows, sortedItems]
+  );
+  const articleIndexByKey = React.useMemo(() => articleIndexMap(articleKeys), [articleKeys]);
+  const totalArticles = articleKeys.length;
+  const totalResultPages = pageCount(totalArticles);
+
+  React.useEffect(() => {
+    setResultPage(1);
+  }, [displayFilter, selectedCategory, workspaceView, sortConfig?.key, sortConfig?.dir, watchFocus]);
+
+  React.useEffect(() => {
+    setResultPage((p) => clampPage(p, totalResultPages));
+  }, [totalResultPages]);
+
+  React.useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [resultPage]);
+
+  const pagedItems = React.useMemo(() => {
+    const start = (resultPage - 1) * SEARCH_BOARD_PAGE_SIZE;
+    return sortedItems.slice(start, start + SEARCH_BOARD_PAGE_SIZE);
+  }, [sortedItems, resultPage]);
+
+  const pagedFlattenedRows = React.useMemo(() => {
+    const start = (resultPage - 1) * SEARCH_BOARD_PAGE_SIZE;
+    const pageKeys = new Set(articleKeys.slice(start, start + SEARCH_BOARD_PAGE_SIZE));
+    return sortedFlattenedRows.filter((row) => pageKeys.has(brandItemKey(row.parent)));
+  }, [sortedFlattenedRows, articleKeys, resultPage]);
+
   const highProfitCount = React.useMemo(() => {
     if (!systemSettings) return 0;
     if (isFlatView) {
@@ -899,20 +978,21 @@ export function SearchBoard({
   };
 
   React.useEffect(() => {
+    if (variant === "job") return;
     const idsToFetch: string[] = [];
     if (isFlatView) {
-      sortedFlattenedRows.forEach((row) => {
+      pagedFlattenedRows.forEach((row) => {
         const id = resolveSkuId(row);
         if (id) idsToFetch.push(id);
       });
     } else {
-      items.forEach((item) => {
+      pagedItems.forEach((item) => {
         if (!expandedRows[item.id]) return;
         idsToFetch.push(...getChildSkuIds(item));
       });
     }
     idsToFetch.forEach((id) => queueRecommendationFetch(id));
-  }, [isFlatView, sortedFlattenedRows, items, expandedRows, queueRecommendationFetch]);
+  }, [variant, isFlatView, pagedFlattenedRows, pagedItems, expandedRows, queueRecommendationFetch]);
 
   const collapseItemRow = React.useCallback((itemId: string | number) => {
     const rowKey = String(itemId);
@@ -938,20 +1018,24 @@ export function SearchBoard({
     const nextItem = sortedItems.slice(currentIdx + 1).find((it) => !isItemProcessed(it));
     if (!nextItem) return;
 
+    const nextIdx = sortedItems.findIndex((it) => String(it.id) === String(nextItem.id));
+    const nextPage = Math.floor(nextIdx / SEARCH_BOARD_PAGE_SIZE) + 1;
+    if (nextPage !== resultPage) setResultPage(nextPage);
+
     requestAnimationFrame(() => {
       document
         .querySelector(`[data-spu-row="${CSS.escape(String(nextItem.id))}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
-  }, [sortedItems, isItemProcessed]);
+  }, [sortedItems, isItemProcessed, resultPage]);
 
   // --- 전체 선택(select-all)용 현재 화면의 SKU ID 목록 ---
   const visibleSkuIds = React.useMemo(() => {
     if (isFlatView) {
-      return sortedFlattenedRows.map((row) => String(row.skuId)).filter(Boolean);
+      return pagedFlattenedRows.map((row) => String(row.skuId)).filter(Boolean);
     }
-    return sortedItems.flatMap((item) => getChildSkuIds(item));
-  }, [isFlatView, sortedFlattenedRows, sortedItems]);
+    return pagedItems.flatMap((item) => getChildSkuIds(item));
+  }, [isFlatView, pagedFlattenedRows, pagedItems]);
 
   const selectedVisibleCount = visibleSkuIds.filter((id) => selectedSkus[id]).length;
   const allVisibleSelected = visibleSkuIds.length > 0 && selectedVisibleCount === visibleSkuIds.length;
@@ -1029,28 +1113,38 @@ export function SearchBoard({
       return next;
     });
 
+    const persist = payloads.map((p) => {
+      const key = String(p.skuId);
+      const bidLine = buildBidMemoLine(Number(p.price), today);
+      const existingMemo = skuStatuses[key]?.memo;
+      const newMemo = existingMemo ? `${existingMemo}\n${bidLine}` : bidLine;
+      return { key, skuId: p.skuId, spuId: p.spuId, newMemo };
+    });
+
     setSkuStatuses((prev) => {
       const next = { ...prev };
-      payloads.forEach((p) => {
-        const key = String(p.skuId);
-        const bidLine = buildBidMemoLine(Number(p.price), today);
-        const existingMemo = prev[key]?.memo;
-        const newMemo = existingMemo ? `${existingMemo}\n${bidLine}` : bidLine;
-        next[key] = {
-          ...defaultSkuStatus(prev[key]),
+      persist.forEach((row) => {
+        next[row.key] = {
+          ...defaultSkuStatus(prev[row.key]),
           handled: true,
           handledAt: now,
           handledDate: today,
-          memo: newMemo,
+          memo: row.newMemo,
           updatedAt: now,
         };
-        void setSkuMemo(p.skuId, newMemo, p.spuId).catch(() => {});
-        void setSkuHandled(p.skuId, true, p.spuId).catch(() => {});
       });
       return next;
     });
 
-    fetchBidHistory();
+    // Server Actions update Next Router. React 19 may replay setState updaters
+    // during SearchBoard render — keep persistence off that stack.
+    window.setTimeout(() => {
+      persist.forEach((row) => {
+        void setSkuMemo(row.skuId, row.newMemo, row.spuId).catch(() => {});
+        void setSkuHandled(row.skuId, true, row.spuId).catch(() => {});
+      });
+      void fetchBidHistory();
+    }, 0);
   };
 
   const resolveSkuActivity = React.useCallback(
@@ -1107,11 +1201,13 @@ export function SearchBoard({
 
   const runBidding = async (payloads: BidPayload[], mode: ExecuteBiddingMode = "normal") => {
     if (payloads.length === 0) return { success: true as const, data: [] };
-    const enriched = payloads.map((p) => ({
-      ...p,
-      sellerBiddingNo: p.sellerBiddingNo,
-      sizeInfo: p.sizeInfo || resolveSkuSizeInfo(p.skuId),
-    }));
+    const enriched = payloads.map((p) =>
+      withBidIdentity({
+        ...p,
+        sellerBiddingNo: p.sellerBiddingNo,
+        sizeInfo: p.sizeInfo || resolveSkuSizeInfo(p.skuId),
+      })
+    );
     const res = await executeBidding(enriched, { mode });
     const results = res.data || [];
     const duplicates = mode === "normal" ? results.filter((r) => r.needsDuplicateConfirm) : [];
@@ -1149,22 +1245,35 @@ export function SearchBoard({
     return res;
   };
 
-  const resolveSkuSizeInfo = (skuId: string | number): string | undefined => {
+  const findSkuDetail = (skuId: string | number) => {
+    const key = String(skuId);
     for (const item of items) {
-      const sku = (item.skuDetails || []).find((s: any) => resolveSkuId(s) === String(skuId));
-      if (sku) {
-        const propsRaw = sku.regionSalePvInfoList || sku.properties || [];
-        return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
-      }
+      const sku = (item.skuDetails || []).find((s: any) => resolveSkuId(s) === key);
+      if (sku) return sku;
     }
     if (isFlatView) {
-      const row = flattenedRows.find((r: any) => String(r.skuId) === String(skuId));
-      if (row) {
-        const propsRaw = row.regionSalePvInfoList || row.properties || [];
-        return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
-      }
+      return flattenedRows.find((r: any) => String(r.skuId) === key) ?? null;
     }
-    return undefined;
+    return null;
+  };
+
+  const resolveSkuSizeInfo = (skuId: string | number): string | undefined => {
+    const sku = findSkuDetail(skuId);
+    if (!sku) return undefined;
+    const propsRaw = sku.regionSalePvInfoList || sku.properties || [];
+    return propsRaw.map((p: any) => p.value || p.propertyValue).join(" / ") || undefined;
+  };
+
+  const withBidIdentity = (payload: BidPayload): BidPayload => {
+    const sku = findSkuDetail(payload.skuId);
+    const identity = sku ? resolveBidIdentity(sku) : null;
+    if (!identity) return payload;
+    return {
+      ...payload,
+      skuId: identity.boardSkuId,
+      apiSkuId: identity.apiSkuId,
+      ...(identity.globalSkuId ? { globalSkuId: identity.globalSkuId } : {}),
+    };
   };
 
   const splitPayloadsByExistingBids = (payloads: BidPayload[]) => {
@@ -1198,6 +1307,7 @@ export function SearchBoard({
     const { conflicts } = duplicateBidModal;
     setDuplicateBidModal(null);
     setIsBidding(true);
+    pauseRecommendationQueue();
 
     try {
       for (const conflict of conflicts) {
@@ -1223,15 +1333,17 @@ export function SearchBoard({
       );
     } finally {
       setIsBidding(false);
+      resumeRecommendationQueue();
     }
   };
 
   const handleSingleBid = async (skuId: string | number, spuId: string | number) => {
-    const priceStr = biddingPrices[String(skuId)];
+    const priceStr = biddingPricesRef.current[String(skuId)] ?? biddingPrices[String(skuId)];
     const price = Number(priceStr);
     if (!priceStr || !Number.isFinite(price) || price <= 0) return;
 
     setIsBidding(true);
+    pauseRecommendationQueue();
     try {
       const payload: BidPayload = { skuId: String(skuId), spuId, price };
       const { conflicts, nonConflicts } = splitPayloadsByExistingBids([payload]);
@@ -1250,6 +1362,7 @@ export function SearchBoard({
       );
     } finally {
       setIsBidding(false);
+      resumeRecommendationQueue();
     }
   };
 
@@ -1269,7 +1382,7 @@ export function SearchBoard({
 
     const payloads: BidPayload[] = [];
     for (const skuId of selectedIds) {
-      const priceStr = biddingPrices[skuId];
+      const priceStr = biddingPricesRef.current[skuId] ?? biddingPrices[skuId];
       if (priceStr && Number(priceStr) > 0) {
         const spuId = skuToSpu.get(String(skuId));
         payloads.push({ skuId, price: Number(priceStr), ...(spuId ? { spuId } : {}) });
@@ -1282,6 +1395,7 @@ export function SearchBoard({
     }
 
     setIsBidding(true);
+    pauseRecommendationQueue();
     try {
       const { conflicts, nonConflicts } = splitPayloadsByExistingBids(payloads);
 
@@ -1310,6 +1424,7 @@ export function SearchBoard({
       );
     } finally {
       setIsBidding(false);
+      resumeRecommendationQueue();
     }
   };
 
@@ -1625,7 +1740,7 @@ export function SearchBoard({
     const watching = currentWatch != null && currentWatch > 0;
     const nextPrice = watching
       ? null
-      : parsePositiveWon(biddingPrices[skuId]) ??
+      : parsePositiveWon(biddingPricesRef.current[skuId] ?? biddingPrices[skuId]) ??
         currentExposureAmount(skuRecommendations[skuId], skuPrice);
 
     if (!watching && nextPrice == null) {
@@ -1682,8 +1797,14 @@ export function SearchBoard({
     });
   };
 
-  const removeItem = (indexToRemove: number) => {
-    setItems(items.filter((_, idx) => idx !== indexToRemove));
+  const removeItem = (target: { id?: string | number; articleNumber?: string }) => {
+    setItems((prev) =>
+      prev.filter((it) => {
+        if (target.id != null && String(it.id) === String(target.id)) return false;
+        if (target.id == null && target.articleNumber && it.articleNumber === target.articleNumber) return false;
+        return true;
+      })
+    );
   };
 
   const handleExcludeSubmit = async () => {
@@ -1693,7 +1814,7 @@ export function SearchBoard({
       const res = await addExcludedArticle(itemToExclude.articleNumber, itemToExclude.title, excludeReason);
       if (res.success) {
         setExcludedArticles(prev => [...prev, itemToExclude.articleNumber]);
-        removeItem(itemToExclude.idx);
+        removeItem(itemToExclude);
         setIsExcludeModalOpen(false);
       } else {
         showFeedback(`제외 처리 실패: ${res.error}`);
@@ -1706,35 +1827,17 @@ export function SearchBoard({
   };
 
 
-  const tableCtx: SearchBoardTableContextValue = {
-    columnWidths,
-    resizing,
-    sortConfig,
-    workspaceView,
-    allVisibleSelected,
-    someVisibleSelected,
+  const openExclude = (target: { articleNumber: string; title: string }) => {
+    setItemToExclude(target);
+    setExcludeReason("");
+    setIsExcludeModalOpen(true);
+  };
+
+  const tableActions = useStableCallbacks({
     toggleSelectAllVisible,
     handleResizeStart,
     resetColumnWidth,
     toggleSort,
-    selectedSkus,
-    skuStatuses,
-    itemStatuses,
-    skippedSkuIds,
-    skuRecommendations,
-    loadingRecommendations,
-    biddingPrices,
-    sourceOffers,
-    loadingSourceOffers,
-    systemSettings,
-    isBidding,
-    expandedRows,
-    skuMemoEditor,
-    memoEditor,
-    savingManualBid,
-    savingStockMarked,
-    savingWatch,
-    savingSkuMemo,
     getSkuBidViews,
     getSpuBidSummary,
     getSpuReviewSummary,
@@ -1747,6 +1850,7 @@ export function SearchBoard({
     handleToggleSkip,
     handleSaveSkuMemo,
     handleBiddingPriceChange,
+    handleBiddingPriceInput,
     handleSingleBid,
     openSourceOfferModal,
     setSkuMemoEditor,
@@ -1756,12 +1860,65 @@ export function SearchBoard({
     setManySelected,
     toggleRow,
     removeItem,
-    openExclude: (target) => {
-      setItemToExclude(target);
-      setExcludeReason("");
-      setIsExcludeModalOpen(true);
-    },
-  };
+    openExclude,
+  });
+
+  const tableCtx: SearchBoardTableContextValue = React.useMemo(
+    () => ({
+      columnWidths,
+      resizing,
+      sortConfig,
+      workspaceView,
+      allVisibleSelected,
+      someVisibleSelected,
+      selectedSkus,
+      skuStatuses,
+      itemStatuses,
+      skippedSkuIds,
+      skuRecommendations,
+      loadingRecommendations,
+      biddingPrices,
+      sourceOffers,
+      loadingSourceOffers,
+      systemSettings,
+      isBidding,
+      expandedRows,
+      skuMemoEditor,
+      memoEditor,
+      savingManualBid,
+      savingStockMarked,
+      savingWatch,
+      savingSkuMemo,
+      ...tableActions,
+    }),
+    [
+      columnWidths,
+      resizing,
+      sortConfig,
+      workspaceView,
+      allVisibleSelected,
+      someVisibleSelected,
+      selectedSkus,
+      skuStatuses,
+      itemStatuses,
+      skippedSkuIds,
+      skuRecommendations,
+      loadingRecommendations,
+      biddingPrices,
+      sourceOffers,
+      loadingSourceOffers,
+      systemSettings,
+      isBidding,
+      expandedRows,
+      skuMemoEditor,
+      memoEditor,
+      savingManualBid,
+      savingStockMarked,
+      savingWatch,
+      savingSkuMemo,
+      tableActions,
+    ]
+  );
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full">
@@ -1769,6 +1926,8 @@ export function SearchBoard({
       <div className="flex-1 min-h-0 glass-panel border border-border/60 rounded-xl flex flex-col overflow-hidden">
         <SearchBoardToolbar
           variant={variant}
+          jobsListHref={jobsListHref}
+          jobResultLabel={jobResultLabel}
           searchType={searchType}
           onSearchTypeChange={setSearchType}
           keyword={keyword}
@@ -1828,6 +1987,7 @@ export function SearchBoard({
             setSelectedSkus({});
             setExpandedRows({});
             setWatchFocus(false);
+            setResultPage(1);
             showFeedback("워크스페이스 목록을 비웠습니다.");
             setOverflowOpen(false);
           }}
@@ -1849,10 +2009,19 @@ export function SearchBoard({
               (!isFlatView && filteredItems.length === 0) ||
               (isFlatView && filteredFlattenedRows.length === 0)
             }
-            sortedFlattenedRows={sortedFlattenedRows}
-            sortedItems={sortedItems}
+            sortedFlattenedRows={pagedFlattenedRows}
+            sortedItems={pagedItems}
+            articleIndexByKey={articleIndexByKey}
+            scrollRef={tableScrollRef}
           />
         </SearchBoardTableProvider>
+
+        <SearchBoardPagination
+          page={resultPage}
+          totalPages={totalResultPages}
+          totalArticles={totalArticles}
+          onPageChange={setResultPage}
+        />
 
         {/* 브랜드 '더 불러오기' (누적 탐색) */}
         {searchType === "brand" && totalCount > 0 && items.length > 0 && (

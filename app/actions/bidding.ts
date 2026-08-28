@@ -7,9 +7,11 @@ import { POIZON_CONSTANTS } from "@/lib/constants/poizon";
 import { getPoizonContext } from "@/lib/api/poizon-context";
 import {
   fetchActiveListingsBySkuIdsSafe,
+  fetchListingByBiddingNo,
   formatBidDate,
   type ParsedListingItem,
 } from "@/lib/utils/poizon-listing";
+import { TRADE_STATUS } from "@/types/poizon-listing";
 
 export interface BidPayload {
   skuId: string | number;
@@ -17,6 +19,9 @@ export interface BidPayload {
   price: number;
   sellerBiddingNo?: string;
   sizeInfo?: string;
+  /** submit-bid DW skuId. 없으면 `skuId`를 그대로 보냄 */
+  apiSkuId?: number;
+  globalSkuId?: number;
 }
 
 export interface ExistingBidInfo {
@@ -196,7 +201,7 @@ export async function getBidHistoryBySkuIds(skuIds: (string | number)[]) {
     const numericIds = skuIds.map((id) => Number(id)).filter((id) => !isNaN(id) && id > 0);
     if (numericIds.length === 0) return { success: true, data: [] as any[] };
 
-    const { supabase, user, client } = await getBiddingContext();
+    const { supabase, user } = await getBiddingContext();
 
     const { data: localRows, error } = await supabase
       .from("bid_history")
@@ -208,27 +213,11 @@ export async function getBidHistoryBySkuIds(skuIds: (string | number)[]) {
 
     if (error) throw error;
 
-    const poizonMap = await fetchActiveListingsBySkuIdsSafe(client, numericIds);
     const seen = new Set<number>();
     const merged: any[] = [];
-
     for (const skuId of numericIds) {
       if (seen.has(skuId)) continue;
       seen.add(skuId);
-
-      const poizonListing = poizonMap.get(skuId);
-      if (poizonListing) {
-        merged.push({
-          sku_id: skuId,
-          spu_id: poizonListing.spuId || null,
-          bid_price: poizonListing.price,
-          size_info: poizonListing.sizeInfo,
-          created_at: poizonListing.createdAt || new Date().toISOString(),
-          seller_bidding_no: poizonListing.sellerBiddingNo,
-        });
-        continue;
-      }
-
       const local = (localRows || []).find((r) => Number(r.sku_id) === skuId);
       if (local) merged.push(local);
     }
@@ -265,15 +254,72 @@ export async function getBidHistoryBySpuIds(spuIds: (string | number)[]) {
   }
 }
 
+function isSubmitApiAccepted(response: { code?: number } | null | undefined): boolean {
+  const code = response?.code;
+  return code === 200 || code === 0;
+}
+
+function extractSellerBiddingNo(data: unknown): string {
+  if (data == null) return "";
+  if (typeof data === "string" || typeof data === "number") {
+    const text = String(data).trim();
+    return text && text !== "0" ? text : "";
+  }
+  if (typeof data !== "object") return "";
+  const rec = data as Record<string, unknown>;
+  for (const key of ["sellerBiddingNo", "biddingNo", "seller_bidding_no"]) {
+    const value = rec[key];
+    if (value != null && String(value).trim() && String(value) !== "0") {
+      return String(value).trim();
+    }
+  }
+  if (rec.data != null && rec.data !== data) return extractSellerBiddingNo(rec.data);
+  return "";
+}
+
+function submitRejectTip(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const rec = data as Record<string, unknown>;
+  const tips = String(rec.tips ?? rec.tip ?? rec.message ?? rec.msg ?? "").trim();
+  if (!tips) return null;
+  if (/fail|error|reject|拒绝|失败|불가|취소/i.test(tips)) return tips;
+  return null;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function confirmListingOnPoizon(
+  client: PoizonClient,
+  sellerBiddingNo: string
+): Promise<"active" | "cancelled" | "missing" | "unknown"> {
+  let sawError = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(700 * attempt);
+    try {
+      const listing = await fetchListingByBiddingNo(client, sellerBiddingNo);
+      if (!listing) continue;
+      if (listing.tradeStatus === TRADE_STATUS.CANCELLED) return "cancelled";
+      return "active";
+    } catch (error) {
+      sawError = true;
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn("[Bidding] 실데이터 입찰 확인 실패:", msg.slice(0, 200));
+    }
+  }
+  return sawError ? "unknown" : "missing";
+}
+
 async function submitSingleBid(
   client: PoizonClient,
   supabase: ReturnType<typeof getServiceRoleClient>,
   userInternalId: string,
   bid: BidPayload
 ): Promise<BidResult> {
-  const payload = {
+  const apiSkuId = Number(bid.apiSkuId ?? bid.skuId);
+  const globalSkuId = bid.globalSkuId ? Number(bid.globalSkuId) : undefined;
+  const payload: Record<string, unknown> = {
     requestId: crypto.randomUUID(),
-    skuId: Number(bid.skuId),
+    skuId: apiSkuId,
     price: Number(bid.price),
     quantity: 1,
     countryCode: POIZON_CONSTANTS.BIDDING.DEFAULT_COUNTRY,
@@ -283,32 +329,84 @@ async function submitSingleBid(
     biddingType: POIZON_CONSTANTS.BIDDING.DEFAULT_BIDDING_TYPE,
     saleType: POIZON_CONSTANTS.BIDDING.DEFAULT_SALE_TYPE,
   };
+  if (globalSkuId && globalSkuId !== apiSkuId) payload.globalSkuId = globalSkuId;
 
   const response = await client.request<any>(POIZON_CONSTANTS.ENDPOINTS.SUBMIT_BID, payload);
 
-  if (response && response.code === 200) {
-    const sellerBiddingNo = response.data?.sellerBiddingNo || response.data?.biddingNo || "";
-    try {
-      await saveBidToLocalDb(supabase, userInternalId, bid, {
-        sellerBiddingNo,
-        bidPrice: Number(bid.price),
-      });
-    } catch (dbErr) {
-      console.warn("[Bidding] bid_history 저장 실패 (입찰은 성공):", dbErr);
-    }
-
+  if (!isSubmitApiAccepted(response)) {
     return {
       skuId: bid.skuId,
-      success: true,
-      message: "입찰 성공",
+      success: false,
+      message: response?.msg || "응답 처리 실패",
+    };
+  }
+
+  const rejectTip = submitRejectTip(response?.data);
+  if (rejectTip) {
+    return {
+      skuId: bid.skuId,
+      success: false,
+      message: rejectTip,
       data: response.data,
     };
   }
 
+  const sellerBiddingNo = extractSellerBiddingNo(response?.data);
+  if (!sellerBiddingNo) {
+    console.warn("[Bidding] submit-bid 성공 코드이나 입찰번호 없음", {
+      skuId: bid.skuId,
+      apiSkuId,
+      code: response?.code,
+      dataType: typeof response?.data,
+    });
+    return {
+      skuId: bid.skuId,
+      success: false,
+      message: "실데이터가 입찰번호를 주지 않았습니다. 입찰이 생성되지 않은 것으로 처리합니다.",
+      data: response.data,
+    };
+  }
+
+  const listingState = await confirmListingOnPoizon(client, sellerBiddingNo);
+  if (listingState === "cancelled") {
+    return {
+      skuId: bid.skuId,
+      success: false,
+      message: "실데이터가 입찰을 바로 취소했습니다.",
+      data: response.data,
+    };
+  }
+  if (listingState === "missing") {
+    return {
+      skuId: bid.skuId,
+      success: false,
+      message: `입찰번호 ${sellerBiddingNo} 를 받았으나 실데이터 입찰 목록에 없습니다.`,
+      data: response.data,
+    };
+  }
+  if (listingState === "unknown") {
+    return {
+      skuId: bid.skuId,
+      success: false,
+      message: `입찰번호 ${sellerBiddingNo} 를 받았으나 실데이터 목록 확인에 실패했습니다. 입찰 관리에서 직접 확인해 주세요.`,
+      data: response.data,
+    };
+  }
+
+  try {
+    await saveBidToLocalDb(supabase, userInternalId, bid, {
+      sellerBiddingNo,
+      bidPrice: Number(bid.price),
+    });
+  } catch (dbErr) {
+    console.warn("[Bidding] bid_history 저장 실패 (실데이터 입찰은 확인됨):", dbErr);
+  }
+
   return {
     skuId: bid.skuId,
-    success: false,
-    message: response?.msg || "응답 처리 실패",
+    success: true,
+    message: "입찰 성공",
+    data: response.data,
   };
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useEffect, useRef, useState } from "react";
 import { ImageIcon, Loader2 } from "lucide-react";
 import { getChildSkuIds, resolveSkuId } from "@/lib/search/search-item";
 import { skuAverageAmount, skuOfferProfit, skuOptionLabel } from "@/lib/search/sku-display";
@@ -13,6 +14,7 @@ import { formatBidDate } from "@/lib/utils/poizon-listing";
 import { getBestSourceOffer } from "@/lib/sourcing/source-offer-view";
 import { BidStatusIndicator } from "./bid-status-indicator";
 import { CopyableArticleNumber } from "./copyable-article-number";
+import { SearchBoardIndexCell } from "./search-board-index-cell";
 import { RowMemoPopover } from "./row-memo-popover";
 import { SkuRowManageCell } from "./sku-row-manage-cell";
 import { SourceOfferPriceCell } from "./source-offer-price-cell";
@@ -25,25 +27,6 @@ import { MetricLine, StackedMetricCell } from "./stacked-metric-cell";
 import { SkuExposureHint } from "./exposure-price-hint";
 import { PriceWatchButton } from "./price-watch-button";
 import { currentExposureAmount, isPriceWatchHit } from "@/lib/utils/price-watch";
-
-function BidPriceInput({ skuId, bidPrice }: { skuId: string; bidPrice?: string }) {
-  const { handleBiddingPriceChange } = useSearchBoardTable();
-  return (
-    <div className="relative group/input w-full">
-      <input
-        type="text"
-        value={bidPrice ? Number(bidPrice).toLocaleString() : ""}
-        onChange={(e) => handleBiddingPriceChange(skuId, e.target.value)}
-        className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all"
-        placeholder="0"
-        aria-label="입찰가"
-      />
-      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">
-        ₩
-      </span>
-    </div>
-  );
-}
 
 function BidNetHint({ netProfit }: { netProfit: number | null }) {
   if (netProfit == null) return null;
@@ -86,20 +69,106 @@ function BidActionButton({
   );
 }
 
+function SkuBidControls({
+  skuId,
+  spuId,
+  bidPrice,
+  naverPrice,
+  compact,
+}: {
+  skuId: string;
+  spuId: string | number;
+  bidPrice?: string;
+  naverPrice: number | null;
+  compact?: boolean;
+}) {
+  const { systemSettings } = useSearchBoardTable();
+  const [draft, setDraft] = useState(bidPrice ?? "");
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(bidPrice ?? "");
+  }, [bidPrice]);
+
+  const { handleBiddingPriceInput } = useSearchBoardTable();
+  const margin = computeBidVsCostMargin(draft, naverPrice ?? undefined, systemSettings);
+  const netProfit = margin?.netProfit ?? null;
+
+  const input = (
+    <div className="relative group/input w-full">
+      <input
+        type="text"
+        value={draft ? Number(draft).toLocaleString() : ""}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onBlur={() => {
+          focusedRef.current = false;
+        }}
+        onChange={(e) => {
+          const numStr = e.target.value.replace(/[^0-9]/g, "");
+          setDraft(numStr);
+          handleBiddingPriceInput(skuId, numStr);
+        }}
+        className="w-full text-[11px] py-1 pl-4 pr-1.5 bg-background border border-secondary/30 rounded-md text-right font-mono font-bold focus:ring-1 focus:ring-primary/30 outline-none transition-all"
+        placeholder="0"
+        aria-label="입찰가"
+      />
+      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold opacity-20 group-focus-within/input:opacity-50">
+        ₩
+      </span>
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <>
+        {margin ? (
+          <div className="flex flex-col items-center leading-none gap-0.5 min-w-[44px]">
+            <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? "text-blue-600" : margin.actualProfit < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+              {formatSignedWon(margin.actualProfit)}
+            </span>
+            <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
+          </div>
+        ) : (
+          <div className="min-w-[44px] opacity-10 text-[9px] font-bold">READY</div>
+        )}
+        <div className="flex flex-col items-center justify-center flex-1 min-w-0">
+          <div className="w-full max-w-[100px] mx-auto">{input}</div>
+          {draft ? <BidNetHint netProfit={netProfit} /> : null}
+        </div>
+        <BidActionButton skuId={skuId} spuId={spuId} bidPrice={draft} compact />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex-1 max-w-[120px] flex flex-col items-center min-w-0">
+        {input}
+        {draft ? <BidNetHint netProfit={netProfit} /> : null}
+      </div>
+      <BidActionButton skuId={skuId} spuId={spuId} bidPrice={draft} />
+    </>
+  );
+}
+
 interface SearchBoardSkuRowProps {
   variant: "flat" | "nested";
   sku: any;
   item: any;
   skuPrice: string | number;
   naverPrice: number | null;
+  articleIndex?: number | null;
 }
 
-export function SearchBoardSkuRow({
+export const SearchBoardSkuRow = memo(function SearchBoardSkuRow({
   variant,
   sku,
   item,
   skuPrice,
   naverPrice,
+  articleIndex,
 }: SearchBoardSkuRowProps) {
   const ctx = useSearchBoardTable();
   const nested = variant === "nested";
@@ -128,8 +197,6 @@ export function SearchBoardSkuRow({
   const avg = skuAverageAmount(sku);
   const profit = skuOfferProfit(rec, skuPrice, naverPrice, ctx.systemSettings);
   const highProfit = isHighProfit(profit?.profit, ctx.systemSettings);
-  const margin = computeBidVsCostMargin(bidPrice, naverPrice ?? undefined, ctx.systemSettings);
-  const netProfit = margin?.netProfit ?? null;
   const watchPrice = skuStatus?.watchPrice ?? null;
   const watchHit = isPriceWatchHit(watchPrice, currentExposureAmount(rec, skuPrice));
 
@@ -140,7 +207,12 @@ export function SearchBoardSkuRow({
 
   return (
     <tr className={rowClass}>
-      <td className={cn(cell, rowVisual.accentClass, "relative")}>
+      <SearchBoardIndexCell
+        index={nested ? null : articleIndex}
+        className={cell}
+        accentClass={rowVisual.accentClass}
+      />
+      <td className={cn(cell, "relative")}>
         <SkuRowManageCell
           skuId={skuKey}
           checked={!!ctx.selectedSkus[skuKey]}
@@ -372,29 +444,19 @@ export function SearchBoardSkuRow({
       <td className={cn(SEARCH_BOARD_TD_HOVER, rowVisual.fillClass, nested ? "px-1 text-center" : "px-2 text-center")}>
         {nested ? (
           <div className="flex items-center justify-center px-1 gap-1.5">
-            {margin ? (
-              <div className="flex flex-col items-center leading-none gap-0.5 min-w-[44px]">
-                <span className={`font-bold text-[11px] ${margin.actualProfit > 0 ? "text-blue-600" : margin.actualProfit < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                  {formatSignedWon(margin.actualProfit)}
-                </span>
-                <span className="text-[9px] font-bold opacity-30">{margin.actualRate}%</span>
-              </div>
-            ) : (
-              <div className="min-w-[44px] opacity-10 text-[9px] font-bold">READY</div>
-            )}
             <PriceWatchButton
               watchPrice={watchPrice}
               hit={watchHit}
               saving={!!ctx.savingWatch[skuKey]}
               onToggle={() => ctx.handleToggleSkuWatch(skuKey, spuIdKey, skuPrice)}
             />
-            <div className="flex flex-col items-center justify-center flex-1 min-w-0">
-              <div className="w-full max-w-[100px] mx-auto">
-                <BidPriceInput skuId={skuKey} bidPrice={bidPrice} />
-              </div>
-              {bidPrice ? <BidNetHint netProfit={netProfit} /> : null}
-            </div>
-            <BidActionButton skuId={skuKey} spuId={item.id} bidPrice={bidPrice} compact />
+            <SkuBidControls
+              skuId={skuKey}
+              spuId={item.id}
+              bidPrice={bidPrice}
+              naverPrice={naverPrice}
+              compact
+            />
           </div>
         ) : (
           <div className="flex items-center justify-center gap-1.5">
@@ -404,14 +466,15 @@ export function SearchBoardSkuRow({
               saving={!!ctx.savingWatch[skuKey]}
               onToggle={() => ctx.handleToggleSkuWatch(skuKey, spuIdKey, skuPrice)}
             />
-            <div className="flex-1 max-w-[120px] flex flex-col items-center min-w-0">
-              <BidPriceInput skuId={skuKey} bidPrice={bidPrice} />
-              {bidPrice ? <BidNetHint netProfit={netProfit} /> : null}
-            </div>
-            <BidActionButton skuId={skuKey} spuId={item.id} bidPrice={bidPrice} />
+            <SkuBidControls
+              skuId={skuKey}
+              spuId={item.id}
+              bidPrice={bidPrice}
+              naverPrice={naverPrice}
+            />
           </div>
         )}
       </td>
     </tr>
   );
-}
+});

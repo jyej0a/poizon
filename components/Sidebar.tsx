@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import {
+  Compass,
+  FileSpreadsheet,
   Settings,
   Search,
   Gavel,
@@ -73,6 +75,8 @@ export function Sidebar() {
             badge={jobsBadge}
             badgeTone={jobsBadgeTone}
           />
+          <NavItem href="/dashboard/bulk" icon={<FileSpreadsheet size={18} />} label="대량 조회" isCollapsed={isCollapsed} isActive={isActive("/dashboard/bulk")} />
+          <NavItem href="/dashboard/discover" icon={<Compass size={18} />} label="아이템 발굴" isCollapsed={isCollapsed} isActive={isActive("/dashboard/discover")} />
           <NavItem href="/dashboard/excluded" icon={<Ban size={18} />} label="제외 목록" isCollapsed={isCollapsed} isActive={isActive("/dashboard/excluded")} />
           <NavItem href="/dashboard/malls" icon={<Store size={18} />} label="수집 몰" isCollapsed={isCollapsed} isActive={isActive("/dashboard/malls")} />
         </NavGroup>

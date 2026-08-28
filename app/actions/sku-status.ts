@@ -1,23 +1,13 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
+import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getServiceRoleClient } from "@/lib/supabase/service-role";
 import { formatBidDate } from "@/lib/utils/poizon-listing";
 import type { SkuStatus } from "@/types/sku-status";
 
 async function getUserId() {
-  const { userId } = await auth();
-  if (!userId) throw new Error("로그인이 필요합니다.");
-
-  const supabase = getServiceRoleClient();
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("id")
-    .eq("clerk_id", userId)
-    .single();
-
-  if (error || !user) throw new Error("사용자를 찾을 수 없습니다.");
-  return { supabase, userInternalId: user.id as string };
+  const { supabase, userId } = await getCurrentUserId();
+  return { supabase, userInternalId: userId };
 }
 
 function rowToSkuStatus(row: any): SkuStatus {
@@ -118,6 +108,29 @@ export async function getSkuStatusesBySpuIds(spuIds?: (string | number)[]) {
     return { success: true, data: map };
   } catch (error: any) {
     console.error("[getSkuStatusesBySpuIds] Error:", error);
+    return { success: false, data: {} as Record<string, SkuStatus>, error: error.message };
+  }
+}
+
+/** 재고 보유로 표기된 옵션만 — 입찰 SKU ID와 검색 보드 키가 다를 때 별칭 매칭용 */
+export async function getStockMarkedSkuStatuses() {
+  try {
+    const { supabase, userInternalId } = await getUserId();
+    const { data, error } = await supabase
+      .from("sku_status")
+      .select(SKU_STATUS_SELECT)
+      .eq("user_id", userInternalId)
+      .eq("stock_marked", true);
+
+    if (error) throw error;
+
+    const map: Record<string, SkuStatus> = {};
+    (data || []).forEach((row: any) => {
+      map[String(row.sku_id)] = rowToSkuStatus(row);
+    });
+    return { success: true, data: map };
+  } catch (error: any) {
+    console.error("[getStockMarkedSkuStatuses] Error:", error);
     return { success: false, data: {} as Record<string, SkuStatus>, error: error.message };
   }
 }

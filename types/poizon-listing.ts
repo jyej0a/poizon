@@ -39,7 +39,13 @@ export const TRADE_STATUS_LABEL: Record<number, { label: string; color: string }
   },
 };
 
-export type ListingViewFilter = "all" | "cn_hidden" | "kr_hidden" | "cn_lowest" | "kr_lowest";
+export type ListingViewFilter =
+  | "all"
+  | "cn_hidden"
+  | "kr_hidden"
+  | "cn_lowest"
+  | "kr_lowest"
+  | "stock";
 
 export const LISTING_VIEW_FILTERS: { key: ListingViewFilter; label: string }[] = [
   { key: "all", label: "노출 전체" },
@@ -47,6 +53,7 @@ export const LISTING_VIEW_FILTERS: { key: ListingViewFilter; label: string }[] =
   { key: "kr_hidden", label: "한국 미노출" },
   { key: "cn_lowest", label: "중국 최저가 미달" },
   { key: "kr_lowest", label: "한국 최저가 미달" },
+  { key: "stock", label: "재고 보유" },
 ];
 
 export type PriceAdjustMode = "set" | "delta" | "percent";
@@ -57,6 +64,8 @@ export interface ParsedListingItem {
   spuId: number;
   globalSkuId: number;
   globalSpuId: number;
+  /** 카탈로그 `skuId`/`dwSkuId`/`regionSkuId` — 검색 보드 sku_status 키와 맞출 때 사용 */
+  skuIdAliases: number[];
   productName: string;
   articleNumber: string;
   image: string;
@@ -81,11 +90,16 @@ export function isLowestMissed(price: number, minPrice: number | undefined): boo
   return minPrice != null && minPrice > 0 && price > minPrice;
 }
 
-export function matchesListingViewFilter(item: ParsedListingItem, filter: ListingViewFilter): boolean {
+export function matchesListingViewFilter(
+  item: ParsedListingItem,
+  filter: ListingViewFilter,
+  opts?: { stockMarked?: boolean }
+): boolean {
   if (filter === "cn_hidden") return !item.cnExposed;
   if (filter === "kr_hidden") return !item.krExposed;
   if (filter === "cn_lowest") return isLowestMissed(item.price, item.cnMinPrice);
   if (filter === "kr_lowest") return isLowestMissed(item.price, item.krMinPrice);
+  if (filter === "stock") return !!opts?.stockMarked;
   return true;
 }
 

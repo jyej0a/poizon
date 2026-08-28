@@ -8,6 +8,20 @@ export const SEARCH_JOB_MAX_ITEMS = 500;
 /** 브랜드 API 페이지 크기. POIZON 거부를 피하려면 50 이하 */
 export const SEARCH_JOB_BRAND_PAGE_SIZE = 50;
 
+/** 품번 잡 1청크당 조회 건수. 한 번에 500개를 치면 진행률이 안 움직이고 중단 시 처음부터 반복한다 */
+export const SEARCH_JOB_ARTICLE_CHUNK_SIZE = 20;
+
+export function articleTermsFromKeyword(
+  keyword: string,
+  maxItems = SEARCH_JOB_MAX_ITEMS
+): string[] {
+  return keyword
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .slice(0, maxItems);
+}
+
 /**
  * 적재되는 검색 결과 1건.
  * 원가 오퍼·노출가를 함께 담아 결과 조회 시 추가 API 호출이 필요 없다.
@@ -18,6 +32,11 @@ export type SearchJobItemPayload = SearchItem & {
 };
 
 export type SearchJobType = "article" | "brand";
+
+/** 검색 작업대 vs 엑셀 대량 vs 수익 후보 발굴. 없으면 search */
+export type SearchJobPurpose = "search" | "bulk" | "discovery";
+
+export const DISCOVERY_DEFAULT_MIN_SALES_VOLUME = 1;
 
 export type SearchJobStatus =
   | "queued"
@@ -47,6 +66,37 @@ export interface SearchJobOptions {
   brandTotal?: number | null;
   /** 적재 상한. 기본 500 */
   maxItems?: number;
+  /** 없으면 search. bulk·discovery 잡은 검색 작업 목록에서 제외 */
+  purpose?: SearchJobPurpose;
+  /** 발굴: 옵션 순수익 하한(원). 하나라도 이상이면 품번 적재 */
+  minNetProfit?: number;
+  /** 발굴: 중국 30일 판매량 하한. 기본 1, 0이면 끔 */
+  minSalesVolume?: number;
+  /** 품번 잡: 다음에 조회할 키워드 인덱스 */
+  articleOffset?: number;
+  /** 대량 조회: 올린 엑셀 파일명 */
+  sourceFileName?: string;
+  /** 대량 조회: 유니크 품번 수 */
+  articleCount?: number;
+}
+
+export function jobPurpose(options: SearchJobOptions | null | undefined): SearchJobPurpose {
+  if (options?.purpose === "discovery") return "discovery";
+  if (options?.purpose === "bulk") return "bulk";
+  return "search";
+}
+
+export function jobResultPath(job: Pick<SearchJob, "id" | "options">): string {
+  const purpose = jobPurpose(job.options);
+  if (purpose === "discovery") return `/dashboard/discover/${job.id}`;
+  if (purpose === "bulk") return `/dashboard/bulk/${job.id}`;
+  return `/dashboard/jobs/${job.id}`;
+}
+
+export function jobListPath(purpose: SearchJobPurpose): string {
+  if (purpose === "discovery") return "/dashboard/discover";
+  if (purpose === "bulk") return "/dashboard/bulk";
+  return "/dashboard/jobs";
 }
 
 export interface SearchJob {
